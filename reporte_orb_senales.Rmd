@@ -1,0 +1,329 @@
+---
+title: "Estrategia ORB — Visualización de Señales"
+subtitle: "Todas las entradas y salidas sobre el precio de SPY (2020–2026)"
+author: "Benjamín Solís"
+date: "Mayo 2026"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+header-includes:
+  - \usepackage{fontspec}
+  - \usepackage{xcolor}
+  - \usepackage{geometry}
+  - \geometry{margin=2cm}
+  - \definecolor{win}{RGB}{27,138,62}
+  - \definecolor{loss}{RGB}{198,40,40}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.align="center")
+library(dplyr); library(lubridate); library(ggplot2); library(scales); library(tidyr); library(httr); library(jsonlite)
+
+ALPACA_KEY    <- "YOUR_ALPACA_KEY"
+ALPACA_SECRET <- "YOUR_ALPACA_SECRET"
+ALPACA_BASE   <- "https://data.alpaca.markets/v2/stocks"
+OUT_DIR <- "C:/Users/solis/Downloads/classic strategies"
+
+# Cargar trades
+trades <- read.csv(file.path(OUT_DIR, "orb_9y_trades.csv"))
+trades$date <- as.Date(trades$date)
+trades <- trades %>% arrange(date)
+
+# Descargar SPY daily closes para contexto de precio
+cat("Descargando SPY daily para contexto...\n")
+daily_url <- sprintf("%s/SPY/bars?timeframe=1Day&start=2020-01-01T00:00:00Z&end=2026-05-04T00:00:00Z&limit=2000&adjustment=all&sort=asc&feed=iex", ALPACA_BASE)
+daily_resp <- httr::GET(daily_url, httr::add_headers("APCA-API-KEY-ID" = ALPACA_KEY, "APCA-API-SECRET-KEY" = ALPACA_SECRET), httr::timeout(30))
+daily_data <- jsonlite::fromJSON(httr::content(daily_resp, "text", encoding = "UTF-8"), simplifyVector = FALSE)
+daily_bars <- daily_data$bars
+n_daily <- length(daily_bars)
+d_dates <- character(n_daily); d_closes <- numeric(n_daily)
+for (k in seq_len(n_daily)) { d_dates[k] <- daily_bars[[k]]$t; d_closes[k] <- as.numeric(daily_bars[[k]]$c) }
+spy_daily <- data.frame(date = as.Date(d_dates), close = d_closes) %>% arrange(date)
+
+# Merge trades con precio
+trades <- trades %>% left_join(spy_daily %>% rename(price = close), by = "date")
+
+# Métricas
+total_trades <- nrow(trades)
+wins  <- sum(trades$pnl_usd > 0)
+losses <- sum(trades$pnl_usd <= 0)
+win_rate <- wins / total_trades * 100
+
+# Función auxiliar para formato de fecha español
+meses <- c("Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre")
+fmt_date <- function(d) sprintf("%s %d", meses[month(d)], year(d))
+```
+
+\vspace{0.3cm}
+
+# SPY — 1,412 señales de entrada y salida
+
+**Periodo:** Julio 2020 – Mayo 2026 · **Trades:** `r total_trades` (`r wins` wins, `r losses` losses) · **Win Rate:** `r sprintf("%.1f%%", win_rate)`
+
+Cada punto en los gráficos representa una operación real del backtest. Verde = ganancia. Rojo = pérdida.
+
+\newpage
+
+## 1. Todas las entradas sobre el precio de SPY
+
+Cada punto marca el día y nivel de precio donde se ejecutó una entrada ORB. Los puntos están sobre la línea de cierre diario de SPY para dar contexto de mercado.
+
+```{r fig-entries, fig.height=5.5, fig.width=11}
+trades$wl <- ifelse(trades$pnl_usd > 0, "Win", "Loss")
+
+p1 <- ggplot() +
+  geom_line(data = spy_daily %>% filter(date >= min(trades$date)), 
+            aes(x = date, y = close), color = "gray50", linewidth = 0.4, alpha = 0.7) +
+  geom_point(data = trades, aes(x = date, y = entry, color = wl, shape = direction),
+             size = 0.9, alpha = 0.7, stroke = 0.3) +
+  scale_color_manual(values = c("Win" = "#2E7D32", "Loss" = "#C62828"), name = "Resultado") +
+  scale_shape_manual(values = c("LONG" = 24, "SHORT" = 25), name = "Direccion",
+                     labels = c("LONG" = "Long", "SHORT" = "Short")) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "Puntos de ENTRADA — Todos los trades ORB SPY",
+       subtitle = sprintf("%d operaciones | %s – %s | %.0f%% Win Rate",
+                          total_trades, min(trades$date), max(trades$date), win_rate),
+       x = "", y = "Precio SPY (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom",
+        panel.grid.minor = element_blank())
+
+print(p1)
+```
+
+\newpage
+
+## 2. Todas las salidas sobre el precio de SPY
+
+Misma lógica pero mostrando los puntos de **salida** (donde se cerró cada trade: stop, target o EOD).
+
+```{r fig-exits, fig.height=5.5, fig.width=11}
+p2 <- ggplot() +
+  geom_line(data = spy_daily %>% filter(date >= min(trades$date)),
+            aes(x = date, y = close), color = "gray50", linewidth = 0.4, alpha = 0.7) +
+  geom_point(data = trades, aes(x = date, y = exit, color = wl, shape = result),
+             size = 0.9, alpha = 0.7, stroke = 0.3) +
+  scale_color_manual(values = c("Win" = "#2E7D32", "Loss" = "#C62828"), name = "Resultado") +
+  scale_shape_manual(values = c("target" = 16, "stop" = 17, "eod_close" = 15),
+                     name = "Tipo de salida",
+                     labels = c("target" = "Target", "stop" = "Stop", "eod_close" = "EOD")) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "Puntos de SALIDA — Todos los trades ORB SPY",
+       subtitle = sprintf("%d salidas | Target: %d · Stop: %d · EOD: %d",
+                          total_trades,
+                          sum(trades$result == "target"),
+                          sum(trades$result == "stop"),
+                          sum(trades$result == "eod_close")),
+       x = "", y = "Precio SPY (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom",
+        panel.grid.minor = element_blank())
+
+print(p2)
+```
+
+\vspace{0.5cm}
+
+**Interpretación:** Los stops (triángulos rojos) se concentran en zonas donde el precio revierte. Los targets (círculos verdes) aparecen cuando el precio tiene momentum direccional. Los EOD (cuadrados) se distribuyen por todo el rango — son trades que no llegaron a ningún extremo.
+
+\newpage
+
+## 3. Recorrido completo: entrada -> salida
+
+Cada línea conecta el punto de entrada con el punto de salida de un trade. La pendiente y el color indican si fue ganancia (verde) o pérdida (rojo). Se muestra una muestra de 200 trades aleatorios para mantener legibilidad.
+
+```{r fig-segments, fig.height=5.5, fig.width=11}
+set.seed(123)
+sample_trades <- trades %>% sample_n(min(200, nrow(trades))) %>% arrange(date)
+
+p3 <- ggplot() +
+  geom_line(data = spy_daily %>% filter(date >= min(trades$date)),
+            aes(x = date, y = close), color = "gray70", linewidth = 0.3, alpha = 0.5) +
+  geom_segment(data = sample_trades,
+               aes(x = date, xend = date, y = entry, yend = exit, color = wl),
+               linewidth = 0.35, alpha = 0.6) +
+  geom_point(data = sample_trades, aes(x = date, y = entry, color = wl), size = 0.6, alpha = 0.7) +
+  geom_point(data = sample_trades, aes(x = date, y = exit, color = wl), size = 0.8, alpha = 0.7, shape = 18) +
+  scale_color_manual(values = c("Win" = "#2E7D32", "Loss" = "#C62828"), name = "") +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "Recorrido ENTRADA -> SALIDA — Muestra de 200 trades ORB SPY",
+       subtitle = "Linea vertical: entrada (circulo) a salida (rombo). Verde = gano, Rojo = perdio",
+       x = "", y = "Precio SPY (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "none",
+        panel.grid.minor = element_blank())
+
+print(p3)
+```
+
+\newpage
+
+## 4. P&L de cada trade en orden cronológico
+
+Cada barra es un trade individual. Se ven claramente las rachas de wins y losses consecutivos. La línea negra es la media móvil de 50 trades.
+
+```{r fig-waterfall, fig.height=4.5, fig.width=11}
+trades <- trades %>% mutate(trade_num = row_number(), cum_pnl = cumsum(pnl_usd),
+                            ma50 = zoo::rollmean(pnl_usd, 50, fill = NA, align = "right"))
+
+p4 <- ggplot(trades, aes(x = trade_num, y = pnl_usd, fill = wl)) +
+  geom_col(width = 0.8, color = NA) +
+  geom_line(aes(y = ma50), color = "black", linewidth = 0.6, na.rm = TRUE) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  scale_fill_manual(values = c("Win" = "#4CAF50", "Loss" = "#EF5350"), guide = "none") +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "P&L por Trade — Orden Cronológico",
+       subtitle = sprintf("%d trades | Línea negra = media móvil 50 trades | Máx win: $%.0f | Máx loss: $%.0f",
+                          total_trades, max(trades$pnl_usd), min(trades$pnl_usd)),
+       x = "Trade #", y = "P&L (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+
+print(p4)
+```
+
+\newpage
+
+## 5. Entradas por día de mes (calendario de señales)
+
+Mapa de calor mostrando cuántos trades hubo por día del mes (1–31) y por año. Revela si hay patrones estacionales.
+
+```{r fig-calendar, fig.height=4, fig.width=11}
+trades_cal <- trades %>%
+  mutate(day_of_month = day(date), year = factor(year(date))) %>%
+  count(day_of_month, year) %>%
+  mutate(day_of_month = factor(day_of_month, levels = 1:31))
+
+p5 <- ggplot(trades_cal, aes(x = day_of_month, y = year, fill = n)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = ifelse(n > 0, as.character(n), "")), size = 3.5) +
+  scale_fill_gradient(low = "#FFF9C4", high = "#F57F17", na.value = "gray95", name = "Trades") +
+  labs(title = "Señales de Entrada por Día del Mes y Año",
+       subtitle = sprintf("Total: %d trades en %d meses", total_trades, length(unique(format(trades$date, "%Y-%m")))),
+       x = "Día del mes", y = "") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        panel.grid = element_blank(),
+        legend.position = "right")
+
+print(p5)
+```
+
+\newpage
+
+## 6. Distribución del P&L por tamaño de rango ORB
+
+¿Los rangos ORB más amplios generan más profit?
+
+```{r fig-range-pnl, fig.height=4, fig.width=10}
+p6 <- ggplot(trades, aes(x = orb_range, y = pnl_usd, color = wl)) +
+  geom_point(size = 0.7, alpha = 0.4) +
+  geom_smooth(method = "loess", se = TRUE, color = "black", linewidth = 0.8, span = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.3) +
+  scale_color_manual(values = c("Win" = "#2E7D32", "Loss" = "#C62828"), guide = "none") +
+  scale_x_continuous(labels = dollar_format(accuracy = 0.01)) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "P&L vs Tamaño del Rango ORB",
+       subtitle = "Línea negra = tendencia suavizada | Cada punto = 1 trade",
+       x = "Rango ORB (USD)", y = "P&L (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+print(p6)
+```
+
+\newpage
+
+## 7. Mapa completo de señales: entrada y salida simultáneas
+
+Gráfico combinado que muestra, para cada trade, el precio de entrada (círculo) y salida (flecha) conectados. La posición vertical indica el nivel de precio; la horizontal, la fecha.
+
+```{r fig-combined, fig.height=6, fig.width=11}
+trades$month_floor <- floor_date(trades$date, "month")
+
+monthly_zones <- trades %>%
+  group_by(month_floor) %>%
+  summarise(
+    p_high = max(entry, exit),
+    p_low  = min(entry, exit),
+    .groups = "drop"
+  )
+
+# Usar todos los trades pero con transparencia alta
+p7 <- ggplot() +
+  geom_rect(data = monthly_zones,
+            aes(xmin = month_floor, xmax = month_floor + days(28),
+                ymin = p_low, ymax = p_high),
+            fill = "gray95", alpha = 0.3) +
+  geom_line(data = spy_daily %>% filter(date >= min(trades$date)),
+            aes(x = date, y = close), color = "gray60", linewidth = 0.3, alpha = 0.6) +
+  geom_segment(data = trades,
+               aes(x = date, xend = date, y = entry, yend = exit, color = wl),
+               linewidth = 0.25, alpha = 0.35) +
+  geom_point(data = trades,
+             aes(x = date, y = entry, color = wl),
+             size = 0.5, alpha = 0.5) +
+  scale_color_manual(values = c("Win" = "#2E7D32", "Loss" = "#C62828"), name = "") +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "Todas las Entradas y Salidas — SPY ORB 2020–2026",
+       subtitle = sprintf("%d trades | %.0f%% Win Rate | Cada linea = 1 trade (entrada -> salida)",
+                          total_trades, win_rate),
+       x = "", y = "Precio SPY (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom",
+        panel.grid.minor = element_blank())
+
+print(p7)
+```
+
+\vspace{0.5cm}
+
+**Lectura del gráfico:** El precio de SPY sube de \~\$300 a \~\$720 en el período. Las líneas verticales verdes y rojas son trades individuales. Las zonas grises de fondo marcan el rango mensual de entradas/salidas. Se observa cómo los wins (verde) tienden a ser más largos y en la dirección del movimiento del precio, mientras que los losses (rojo) suelen ser cortos y contra tendencia.
+
+\newpage
+
+## 8. Entradas LONG vs SHORT separadas
+
+```{r fig-long-short, fig.height=6, fig.width=11}
+trades$dir_label <- ifelse(trades$direction == "LONG", 
+  sprintf("LONG — %d trades (%d wins, %d losses)", 
+          sum(trades$direction == "LONG"),
+          sum(trades$direction == "LONG" & trades$wl == "Win"),
+          sum(trades$direction == "LONG" & trades$wl == "Loss")),
+  sprintf("SHORT — %d trades (%d wins, %d losses)",
+          sum(trades$direction == "SHORT"),
+          sum(trades$direction == "SHORT" & trades$wl == "Win"),
+          sum(trades$direction == "SHORT" & trades$wl == "Loss")))
+
+p8 <- ggplot() +
+  geom_line(data = spy_daily %>% filter(date >= min(trades$date)),
+            aes(x = date, y = close), color = "gray70", linewidth = 0.3) +
+  geom_point(data = trades, aes(x = date, y = entry, color = wl),
+             size = 0.6, alpha = 0.55) +
+  scale_color_manual(values = c("Win" = "#2E7D32", "Loss" = "#C62828"), guide = "none") +
+  scale_y_continuous(labels = dollar_format()) +
+  facet_wrap(~direction, ncol = 1, scales = "free_y") +
+  labs(title = "Entradas LONG vs SHORT sobre el precio de SPY",
+       subtitle = "Cada punto = entrada. Verde = ganó. Rojo = perdió",
+       x = "", y = "Precio SPY (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold", size = 11),
+        panel.grid.minor = element_blank())
+
+print(p8)
+```
+
+\vspace{0.3cm}
+
+\begin{center}
+\rule{0.5\textwidth}{0.5pt}
+\vspace{0.3cm}
+\textit{Datos: Alpaca Markets (IEX feed) · SPY 5min · Julio 2020 – Mayo 2026}
+\end{center}

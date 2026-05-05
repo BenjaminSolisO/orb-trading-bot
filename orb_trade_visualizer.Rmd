@@ -1,0 +1,318 @@
+---
+title: "Estrategia ORB — SPY: Entradas y Salidas"
+subtitle: "Mayo 2024 – Mayo 2026 | 482 Operaciones"
+author: "Opening Range Breakout"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 2
+geometry: margin=2cm
+fontsize: 10pt
+header-includes:
+  - \usepackage{fontspec}
+  - \usepackage{booktabs}
+  - \usepackage{xcolor}
+  - \usepackage{float}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.align="center")
+library(dplyr); library(ggplot2); library(scales); library(lubridate); library(knitr)
+OUTPUT_DIR <- "C:/Users/solis/Downloads/classic strategies"
+```
+
+\newpage
+
+# Resumen General
+
+```{r load}
+raw <- read.csv(file.path(OUTPUT_DIR, "spy_5min_2012_2026.csv"), stringsAsFactors = FALSE)
+raw$datetime <- as.POSIXct(raw$datetime, tz = "America/New_York")
+raw <- raw %>% filter(format(datetime, "%H:%M") >= "09:30", format(datetime, "%H:%M") <= "15:55")
+raw$date <- as.Date(raw$datetime, tz = "America/New_York")
+
+trades <- read.csv(file.path(OUTPUT_DIR, "orb_extended_trades.csv"), stringsAsFactors = FALSE)
+trades$date <- as.Date(trades$date)
+
+n_t   <- nrow(trades)
+n_w   <- sum(trades$pnl_usd > 0)
+wr    <- n_w / n_t * 100
+pf    <- abs(sum(trades$pnl_usd[trades$pnl_usd > 0]) / sum(trades$pnl_usd[trades$pnl_usd <= 0]))
+tot   <- sum(trades$pnl_usd)
+dd    <- min(cumsum(trades$pnl_usd) - cummax(cumsum(trades$pnl_usd)))
+```
+
+La estrategia **Opening Range Breakout (ORB)** opera la ruptura del rango de los primeros 30 minutos (09:30--10:00 ET). Se ejecutaron **`r n_t` operaciones** en **500 días** de mercado, con los siguientes resultados:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lr}
+\toprule
+Métrica & Valor \\
+\midrule
+Tasa de Acierto   & `r round(wr, 1)`\% \\
+Profit Factor     & `r round(pf, 2)` \\
+P\&L Total        & \$`r round(tot, 2)` \\
+Máx. Drawdown     & \$`r round(dd, 2)` \\
+Ganancia Promedio & \$`r round(mean(trades$pnl_usd[trades$pnl_usd > 0]), 2)` \\
+Pérdida Promedio  & \$`r round(mean(trades$pnl_usd[trades$pnl_usd <= 0]), 2)` \\
+Mejor Trade       & \$`r round(max(trades$pnl_usd), 2)` \\
+Peor Trade        & \$`r round(min(trades$pnl_usd), 2)` \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\newpage
+
+# Curva de Equity
+
+```{r equity, fig.width=9, fig.height=3.5}
+trades <- trades %>% arrange(date) %>% mutate(cum_pnl = cumsum(pnl_usd))
+
+ggplot(trades, aes(x = date, y = cum_pnl)) +
+  geom_area(fill = "#4CAF50", alpha = 0.15) +
+  geom_line(color = "#4CAF50", linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "P&L Acumulado — ORB SPY", x = "", y = "P&L (USD)") +
+  scale_y_continuous(labels = dollar_format()) +
+  theme_minimal(base_size = 10)
+```
+
+\newpage
+
+# P&L Mensual
+
+```{r monthly, fig.width=9, fig.height=3}
+trades$trade_month <- floor_date(trades$date, "month")
+monthly <- trades %>%
+  group_by(trade_month) %>%
+  summarise(pnl = sum(pnl_usd), n = n(), wr = mean(pnl_usd > 0) * 100, .groups = "drop")
+
+ggplot(monthly, aes(x = trade_month, y = pnl, fill = pnl > 0)) +
+  geom_col(width = 20, show.legend = FALSE) +
+  scale_fill_manual(values = c("TRUE" = "#4CAF50", "FALSE" = "#F44336")) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "P&L por Mes", x = "", y = "P&L (USD)") +
+  theme_minimal(base_size = 10)
+```
+
+```{r monthly-table}
+monthly_display <- monthly %>%
+  arrange(desc(trade_month)) %>%
+  mutate(
+    Mes    = format(trade_month, "%b %Y"),
+    PnL    = paste0("$", round(pnl, 0)),
+    Trades = n,
+    WR     = paste0(round(wr, 0), "%")
+  ) %>%
+  select(Mes, PnL, Trades, WR)
+
+kable(monthly_display, booktabs = TRUE, align = c("l", "r", "c", "c"),
+      caption = "Resultado Mensual")
+```
+
+\newpage
+
+# Cómo Leer los Gráficos de Operaciones
+
+Cada gráfico muestra un día de trading completo con velas de 5 minutos. Los elementos son:
+
+\begin{description}
+  \item[Zona amarilla] Rango ORB (09:30--10:00). El precio alto del rango es \textbf{ORB High} y el bajo es \textbf{ORB Low}.
+  \item[Punto azul $\blacktriangle$] \textbf{Entrada} — donde se ejecutó la orden (ORB High + \$0.01 en longs, ORB Low - \$0.01 en shorts).
+  \item[Punto rojo $\bullet$] \textbf{Salida} — donde se cerró la posición.
+  \item[Línea punteada roja] \textbf{Stop Loss} — el lado opuesto del rango ORB.
+  \item[Línea punteada verde] \textbf{Target} — 2 veces el riesgo (ratio 2:1).
+  \item[Velas verdes/rojas] Subidas y bajadas dentro del día.
+\end{description}
+
+\newpage
+
+# Mejores 6 Operaciones (Ganadoras)
+
+```{r best-trades, fig.width=8, fig.height=4, results='asis'}
+best_trades <- trades %>% arrange(desc(pnl_usd)) %>% head(6)
+
+plot_day <- function(tr, day_raw) {
+  orb_candles <- day_raw[1:6, ]
+  orb_high <- max(orb_candles$high)
+  orb_low  <- min(orb_candles$low)
+  
+  day_raw$color <- ifelse(day_raw$close >= day_raw$open, "#4CAF50", "#F44336")
+  
+  # find the exit time candle for the annotation
+  exit_idx <- which.min(abs(as.numeric(day_raw$datetime) -
+    as.numeric(as.POSIXct(paste(tr$date, "15:50:00"), tz = "America/New_York"))))
+  if (length(exit_idx) == 0) exit_idx <- nrow(day_raw)
+  
+  p <- ggplot(day_raw, aes(x = datetime)) +
+    # candles
+    geom_rect(aes(xmin = datetime - minutes(2), xmax = datetime + minutes(2),
+                  ymin = low, ymax = high, fill = color), alpha = 0.25, color = NA) +
+    geom_segment(aes(x = datetime - minutes(2), xend = datetime,
+                     y = open, yend = open), color = "gray40", linewidth = 0.4) +
+    geom_segment(aes(x = datetime, xend = datetime + minutes(2),
+                     y = close, yend = close), color = "gray40", linewidth = 0.4) +
+    scale_fill_identity() +
+    # ORB zone
+    annotate("rect",
+      xmin = orb_candles$datetime[1] - minutes(2),
+      xmax = orb_candles$datetime[6] + minutes(2),
+      ymin = orb_low, ymax = orb_high,
+      fill = "#FFC107", alpha = 0.2) +
+    geom_hline(yintercept = orb_high, linetype = "dashed", color = "#E65100", linewidth = 0.6) +
+    geom_hline(yintercept = orb_low,  linetype = "dashed", color = "#E65100", linewidth = 0.6) +
+    # Stop line
+    geom_hline(yintercept = tr$stop, linetype = "dotted", color = "#F44336", linewidth = 0.5, alpha = 0.8) +
+    # Target line
+    geom_hline(yintercept = tr$target, linetype = "dotted", color = "#4CAF50", linewidth = 0.5, alpha = 0.8) +
+    # Entry point
+    annotate("point", x = orb_candles$datetime[6] + minutes(5),
+             y = tr$entry, color = "#1565C0", size = 3.5, shape = 17) +
+    # Exit point
+    annotate("point", x = day_raw$datetime[exit_idx],
+             y = tr$exit, color = "#C62828", size = 3, shape = 16) +
+    # Labels for stop and target
+    annotate("text",
+      x = day_raw$datetime[max(1, nrow(day_raw) - 5)],
+      y = tr$stop + 0.08, label = "Stop", color = "#F44336", size = 2.5, hjust = 1) +
+    annotate("text",
+      x = day_raw$datetime[max(1, nrow(day_raw) - 5)],
+      y = tr$target + 0.08, label = "Target", color = "#4CAF50", size = 2.5, hjust = 1) +
+    labs(
+      title = sprintf("%s | %s | P&L: +$%.2f | %s",
+                      tr$date, tr$direction, abs(tr$pnl_usd), tr$result),
+      subtitle = sprintf("Entrada: $%.2f | Salida: $%.2f | Stop: $%.2f | Target: $%.2f",
+                         tr$entry, tr$exit, tr$stop, tr$target),
+      x = "Hora (ET)", y = "Precio SPY"
+    ) +
+    scale_x_datetime(date_labels = "%H:%M", date_breaks = "1 hour") +
+    theme_minimal(base_size = 8.5) +
+    theme(
+      plot.title = element_text(face = "bold", size = 9),
+      plot.subtitle = element_text(size = 7.5),
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 0, size = 7)
+    )
+  
+  print(p)
+  cat("\n\n")
+}
+
+for (i in seq_len(nrow(best_trades))) {
+  tr <- best_trades[i, ]
+  day_raw <- raw %>% filter(date == tr$date) %>% arrange(datetime)
+  if (nrow(day_raw) >= 10) {
+    plot_day(tr, day_raw)
+  }
+}
+```
+
+\newpage
+
+# Peores 6 Operaciones (Perdedoras)
+
+```{r worst-trades, fig.width=8, fig.height=4, results='asis'}
+worst_trades <- trades %>% arrange(pnl_usd) %>% head(6)
+
+for (i in seq_len(nrow(worst_trades))) {
+  tr <- worst_trades[i, ]
+  day_raw <- raw %>% filter(date == tr$date) %>% arrange(datetime)
+  if (nrow(day_raw) >= 10) {
+    plot_day(tr, day_raw)
+  }
+}
+```
+
+\newpage
+
+# Distribución de Resultados
+
+```{r dist, fig.width=8, fig.height=3.5}
+trades %>% count(result) %>% mutate(pct = n / sum(n) * 100) %>%
+  mutate(result = factor(result, levels = c("eod_close", "stop", "target"),
+         labels = c("Cierre de día", "Stop Loss", "Target"))) %>%
+  ggplot(aes(x = result, y = n, fill = result)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = sprintf("%d\n(%.0f%%)", n, pct)), vjust = -0.2, size = 4, lineheight = 0.9) +
+  scale_fill_manual(values = c("Cierre de día" = "#9E9E9E", "Stop Loss" = "#F44336", "Target" = "#4CAF50")) +
+  labs(title = "Tipo de Salida", x = "", y = "Operaciones") +
+  theme_minimal(base_size = 11)
+
+ggplot(trades, aes(x = pnl_usd, fill = pnl_usd > 0)) +
+  geom_histogram(bins = 40, color = "white", alpha = 0.85) +
+  scale_fill_manual(values = c("TRUE" = "#4CAF50", "FALSE" = "#F44336"),
+                    labels = c("TRUE" = "Ganancia", "FALSE" = "Pérdida"), name = "") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(title = "Distribución de P&L por Operación", x = "P&L (USD)", y = "Frecuencia") +
+  scale_x_continuous(labels = dollar_format()) +
+  theme_minimal(base_size = 11)
+```
+
+\newpage
+
+# Long vs Short
+
+```{r direction, fig.width=7, fig.height=3.5}
+trades %>%
+  group_by(direction) %>%
+  summarise(total = sum(pnl_usd), n = n(), wr = mean(pnl_usd > 0) * 100,
+            avg_win = mean(pnl_usd[pnl_usd > 0]), avg_loss = mean(pnl_usd[pnl_usd <= 0]),
+            .groups = "drop") %>%
+  ggplot(aes(x = direction, y = total, fill = total > 0)) +
+  geom_col(width = 0.4, show.legend = FALSE) +
+  geom_text(aes(label = sprintf("$%.0f | %d ops | Acierto %.0f%%\nGan. prom: $%.1f | Pér. prom: $%.1f",
+                                total, n, wr, avg_win, avg_loss)),
+            vjust = ifelse(trades %>% group_by(direction) %>%
+              summarise(t = sum(pnl_usd)) %>% pull(t) > 0, -0.3, 1.3),
+            size = 3.5, lineheight = 0.9) +
+  scale_fill_manual(values = c("TRUE" = "#4CAF50", "FALSE" = "#F44336")) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "P&L por Dirección", x = "", y = "P&L (USD)") +
+  theme_minimal(base_size = 11)
+```
+
+\newpage
+
+# Reglas de la Estrategia
+
+\begin{description}
+  \item[1. Rango ORB] Se calcula con las primeras 6 velas de 5 minutos (09:30--10:00 ET). El máximo es \textbf{ORB High} y el mínimo es \textbf{ORB Low}.
+  \item[2. Entrada LONG] Si una vela posterior a las 10:00 rompe el ORB High \textbf{con volumen superior al promedio del rango}, se entra largo en ORB High + \$0.01.
+  \item[3. Entrada SHORT] Si una vela rompe el ORB Low \textbf{con volumen superior al promedio}, se entra corto en ORB Low - \$0.01.
+  \item[4. Stop Loss] El lado opuesto del rango ORB (ORB Low para longs, ORB High para shorts).
+  \item[5. Target] 2 veces el riesgo (ratio 2:1).
+  \item[6. Cierre de día] Si ni el stop ni el target se alcanzan, se cierra al precio de cierre de la última vela.
+  \item[7. Un trade por día] Solo se toma la primera ruptura válida del día.
+  \item[8. Rango mínimo] Si el rango ORB es menor al 0.1\% del precio, no se opera ese día.
+\end{description}
+
+\textbf{Comisiones:} \$0.02 por acción (ida y vuelta) × 10 acciones = \$0.20 por operación.
+
+\newpage
+
+# Bitácora de Operaciones (Primeras 100)
+
+```{r trade-log, results='asis'}
+trades_display <- trades %>%
+  arrange(date) %>%
+  head(100) %>%
+  mutate(
+    Fecha     = as.character(date),
+    Dirección = direction,
+    Entrada   = sprintf("$%.2f", entry),
+    Salida    = sprintf("$%.2f", exit),
+    "P&L"     = sprintf("$%.2f", pnl_usd),
+    Resultado = case_when(
+      result == "target" ~ "Target",
+      result == "stop" ~ "Stop",
+      result == "eod_close" ~ "Cierre día"
+    )
+  ) %>%
+  select(Fecha, Dirección, Entrada, Salida, "P&L", Resultado)
+
+kable(trades_display, booktabs = TRUE, align = c("l", "c", "r", "r", "r", "c"),
+      caption = "Primeras 100 Operaciones (bitácora completa en orb_extended_trades.csv)")
+```

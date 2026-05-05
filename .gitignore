@@ -1,0 +1,49 @@
+# Credentials
+.env
+*.json
+
+# R temporary files
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# Pandoc/Rmd intermediates
+*.knit.md
+*.log
+*.aux
+*.out
+*.tex
+*.toc
+*.synctex.gz
+reporte_*_files/
+visualizador_*_files/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Outputs (large generated files)
+*.csv
+*.png
+*.pdf
+*.xlsx
+*.html
+
+# Session notes
+session_notes.md
+2026*txt
+orb_bot_log.txt
+orb_bot_error.txt
+orb_matriz_mensual.log
+orb_trade_visualizer.log
+reporte_estrategias.log
+
+# Keep the example env file
+!.env.example
+!requirements.txt
+!Procfile_bot
+
+# Keep Rmd source files (not the outputs)
+!*.Rmd

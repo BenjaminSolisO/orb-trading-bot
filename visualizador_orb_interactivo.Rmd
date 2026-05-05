@@ -1,0 +1,418 @@
+---
+title: "ORB SPY — Visualizador Interactivo de Señales"
+subtitle: "Zoom · Pan · Hover · 1,412 trades · 2020–2026"
+author: ""
+date: ""
+output:
+  html_document:
+    toc: false
+    theme: flatly
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.width=12, fig.height=6)
+library(dplyr); library(lubridate); library(ggplot2); library(scales); library(plotly); library(htmlwidgets); library(tidyr)
+
+OUT_DIR <- "C:/Users/solis/Downloads/classic strategies"
+
+trades <- read.csv(file.path(OUT_DIR, "orb_9y_trades.csv"))
+trades$date <- as.Date(trades$date)
+trades <- trades %>% 
+  arrange(date) %>%
+  mutate(
+    trade_num = row_number(),
+    cum_pnl = cumsum(pnl_usd),
+    wl = ifelse(pnl_usd > 0, "Win", "Loss"),
+    signal = paste(direction, wl),  # "LONG Win", "LONG Loss", "SHORT Win", "SHORT Loss"
+    year = factor(year(date)),
+    month_label = format(date, "%Y-%m"),
+    tooltip_entry = sprintf(
+      "<b>%s</b><br>Entrada: $%.2f<br>%s | %s<br>Rango ORB: $%.2f<br>Resultado: %s",
+      date, entry, direction, wl, orb_range, result
+    ),
+    tooltip_exit = sprintf(
+      "<b>%s</b><br>Salida: $%.2f<br>%s | %s<br>P&L: %+.2f<br>Resultado: %s",
+      date, exit, direction, wl, pnl_usd, result
+    ),
+    tooltip_pnl = sprintf(
+      "<b>%s</b> | %s | %s<br>Entrada: $%.2f | Salida: $%.2f<br>P&L: %+.2f | %s<br>Rango: $%.2f",
+      date, direction, wl, entry, exit, pnl_usd, result, orb_range
+    )
+  )
+
+# ── 4 combinaciones: colores y formas ──
+signal_colors <- c(
+  "LONG Win"   = "#2E7D32",
+  "LONG Loss"  = "#C62828",
+  "SHORT Win"  = "#2E7D32",
+  "SHORT Loss" = "#C62828"
+)
+signal_symbols <- c(
+  "LONG Win"   = "triangle-up",
+  "LONG Loss"  = "triangle-up",
+  "SHORT Win"  = "triangle-down",
+  "SHORT Loss" = "triangle-down"
+)
+
+# SPY daily for context
+library(httr); library(jsonlite)
+ALPACA_KEY    <- "YOUR_ALPACA_KEY"
+ALPACA_SECRET <- "YOUR_ALPACA_SECRET"
+ALPACA_BASE   <- "https://data.alpaca.markets/v2/stocks"
+
+daily_url <- sprintf("%s/SPY/bars?timeframe=1Day&start=2020-01-01T00:00:00Z&end=2026-05-04T00:00:00Z&limit=2000&adjustment=all&sort=asc&feed=iex", ALPACA_BASE)
+daily_resp <- httr::GET(daily_url, httr::add_headers("APCA-API-KEY-ID" = ALPACA_KEY, "APCA-API-SECRET-KEY" = ALPACA_SECRET), httr::timeout(30))
+daily_data <- jsonlite::fromJSON(httr::content(daily_resp, "text", encoding = "UTF-8"), simplifyVector = FALSE)
+daily_bars <- daily_data$bars
+n_daily <- length(daily_bars)
+d_dates <- character(n_daily); d_closes <- numeric(n_daily)
+for (k in seq_len(n_daily)) { d_dates[k] <- daily_bars[[k]]$t; d_closes[k] <- as.numeric(daily_bars[[k]]$c) }
+spy_daily <- data.frame(date = as.Date(d_dates), close = d_closes) %>% 
+  arrange(date) %>% 
+  filter(date >= min(trades$date), date <= max(trades$date))
+
+# Stats
+total_pnl <- sum(trades$pnl_usd)
+wr <- mean(trades$pnl_usd > 0) * 100
+ntrades <- nrow(trades)
+l_w <- sum(trades$signal == "LONG Win"); l_l <- sum(trades$signal == "LONG Loss")
+s_w <- sum(trades$signal == "SHORT Win"); s_l <- sum(trades$signal == "SHORT Loss")
+l_wr <- l_w / (l_w + l_l) * 100; s_wr <- s_w / (s_w + s_l) * 100
+l_pnl <- sum(trades$pnl_usd[trades$direction == "LONG"])
+s_pnl <- sum(trades$pnl_usd[trades$direction == "SHORT"])
+```
+
+<style>
+body { font-family: 'Segoe UI', sans-serif; }
+.section-title { color: #1a237e; border-bottom: 2px solid #1a237e; padding-bottom: 5px; margin-top: 30px; }
+.stats-box { background: #f5f5f5; border-radius: 8px; padding: 15px; margin: 15px 0; display: flex; gap: 25px; flex-wrap: wrap; }
+.stat-item { text-align: center; min-width: 80px; }
+.stat-value { font-size: 22px; font-weight: bold; color: #1a237e; }
+.stat-label { font-size: 11px; color: #666; }
+.legend-box { display: flex; gap: 15px; flex-wrap: wrap; margin: 10px 0; font-size: 13px; }
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-shape { font-size: 18px; }
+</style>
+
+<div class="stats-box">
+  <div class="stat-item"><div class="stat-value">`r ntrades`</div><div class="stat-label">TRADES</div></div>
+  <div class="stat-item"><div class="stat-value">`r sprintf("%.1f%%", wr)`</div><div class="stat-label">WIN RATE</div></div>
+  <div class="stat-item"><div class="stat-value">`r sprintf("$%.0f", total_pnl)`</div><div class="stat-label">P&L TOTAL</div></div>
+  <div class="stat-item"><div class="stat-value" style="color:#1565C0">`r sprintf("$%.0f", l_pnl)`</div><div class="stat-label">LONG P&L</div></div>
+  <div class="stat-item"><div class="stat-value" style="color:#E65100">`r sprintf("$%.0f", s_pnl)`</div><div class="stat-label">SHORT P&L</div></div>
+</div>
+
+<div class="legend-box">
+  <b>Leyenda:</b>
+  <span class="legend-item"><span class="legend-shape" style="color:#2E7D32">&#9650;</span> LONG Win (`r l_w`)</span>
+  <span class="legend-item"><span class="legend-shape" style="color:#C62828">&#9650;</span> LONG Loss (`r l_l`)</span>
+  <span class="legend-item"><span class="legend-shape" style="color:#2E7D32">&#9660;</span> SHORT Win (`r s_w`)</span>
+  <span class="legend-item"><span class="legend-shape" style="color:#C62828">&#9660;</span> SHORT Loss (`r s_l`) </span>
+</div>
+
+<div style="color:#666; font-size:13px; margin-bottom:10px">
+  &#9650; (triángulo arriba) = LONG &nbsp;|&nbsp; &#9660; (triángulo abajo) = SHORT &nbsp;|&nbsp; Verde = Win &nbsp;|&nbsp; Rojo = Loss
+</div>
+
+---
+
+## 1. Equity Curve + Long/Short breakdown {.section-title}
+
+```{r equity-interactive}
+cum_plot <- plot_ly() %>%
+  add_trace(data = trades, x = ~date, y = ~cum_pnl, 
+            type = "scatter", mode = "lines",
+            line = list(color = "#1a237e", width = 2),
+            name = "Total",
+            hovertemplate = "<b>%{x|%d %b %Y}</b><br>P&L Total: $%{y:.2f}<extra></extra>")
+
+# Long cumulative
+long_cum <- trades %>% filter(direction == "LONG") %>% mutate(lcum = cumsum(pnl_usd))
+short_cum <- trades %>% filter(direction == "SHORT") %>% mutate(scum = cumsum(pnl_usd))
+
+cum_plot <- cum_plot %>%
+  add_trace(data = long_cum, x = ~date, y = ~lcum,
+            type = "scatter", mode = "lines", line = list(color = "#1565C0", width = 1, dash = "dot"),
+            name = sprintf("LONG ($%.0f)", l_pnl),
+            hovertemplate = "<b>%{x|%d %b %Y}</b><br>LONG: $%{y:.2f}<extra></extra>") %>%
+  add_trace(data = short_cum, x = ~date, y = ~scum,
+            type = "scatter", mode = "lines", line = list(color = "#E65100", width = 1, dash = "dot"),
+            name = sprintf("SHORT ($%.0f)", s_pnl),
+            hovertemplate = "<b>%{x|%d %b %Y}</b><br>SHORT: $%{y:.2f}<extra></extra>") %>%
+  layout(
+    title = list(text = "ORB SPY — Curva de Equity (Total + Long/Short)", font = list(size = 18)),
+    xaxis = list(title = "", rangeslider = list(visible = TRUE, thickness = 0.05)),
+    yaxis = list(title = "P&L Acumulado (USD)", tickprefix = "$"),
+    legend = list(orientation = "h", y = 1.15),
+    hovermode = "x unified"
+  )
+cum_plot
+```
+
+---
+
+## 2. Entradas: LONG vs SHORT — Win vs Loss {.section-title}
+
+*&#9650; Triángulo arriba = LONG &nbsp;|&nbsp; &#9660; Triángulo abajo = SHORT &nbsp;|&nbsp; Verde = Win &nbsp;|&nbsp; Rojo = Loss*
+
+```{r entries-interactive}
+entry_plot <- plot_ly() %>%
+  add_trace(data = spy_daily, x = ~date, y = ~close,
+            type = "scatter", mode = "lines",
+            line = list(color = "gray70", width = 0.5),
+            name = "SPY", hoverinfo = "skip")
+
+for (sig in names(signal_colors)) {
+  df <- trades %>% filter(signal == sig)
+  entry_plot <- entry_plot %>%
+    add_trace(data = df, x = ~date, y = ~entry,
+              type = "scatter", mode = "markers",
+              marker = list(symbol = signal_symbols[sig], size = 6, color = signal_colors[sig], opacity = 0.7,
+                            line = list(color = signal_colors[sig], width = 0.5)),
+              name = sig,
+              text = ~tooltip_entry, hoverinfo = "text")
+}
+
+entry_plot <- entry_plot %>%
+  layout(
+    title = "ENTRADAS — LONG (&#9650;) vs SHORT (&#9660;) · Verde = Win · Rojo = Loss",
+    xaxis = list(title = "", rangeslider = list(visible = TRUE, thickness = 0.05)),
+    yaxis = list(title = "Precio SPY (USD)", tickprefix = "$"),
+    legend = list(orientation = "h", y = 1.15),
+    hovermode = "closest"
+  )
+entry_plot
+```
+
+---
+
+## 3. Salidas: LONG vs SHORT — Win vs Loss {.section-title}
+
+*Misma lógica que entradas pero en el punto de salida. Hacé hover para ver P&L.*
+
+```{r exits-interactive}
+exit_plot <- plot_ly() %>%
+  add_trace(data = spy_daily, x = ~date, y = ~close,
+            type = "scatter", mode = "lines",
+            line = list(color = "gray70", width = 0.5),
+            name = "SPY", hoverinfo = "skip")
+
+for (sig in names(signal_colors)) {
+  df <- trades %>% filter(signal == sig)
+  # Para salidas: mismo color pero symbol abierto (sin relleno) 
+  ecol <- signal_colors[sig]
+  exit_plot <- exit_plot %>%
+    add_trace(data = df, x = ~date, y = ~exit,
+              type = "scatter", mode = "markers",
+              marker = list(symbol = "circle-open", size = 6, color = ecol, opacity = 0.7,
+                            line = list(width = 1.5)),
+              name = paste(sig, "Exit"),
+              text = ~tooltip_exit, hoverinfo = "text")
+}
+
+exit_plot <- exit_plot %>%
+  layout(
+    title = "SALIDAS — LONG vs SHORT · Verde = Win · Rojo = Loss (círculo vacío = salida)",
+    xaxis = list(title = "", rangeslider = list(visible = TRUE, thickness = 0.05)),
+    yaxis = list(title = "Precio SPY (USD)", tickprefix = "$"),
+    legend = list(orientation = "h", y = 1.15),
+    hovermode = "closest"
+  )
+exit_plot
+```
+
+---
+
+## 4. Vista completa: todos los trades (entrada → salida) {.section-title}
+
+*Cada segmento vertical = 1 trade. Color y forma indican LONG/SHORT + Win/Loss.*
+
+```{r combined-interactive}
+combined <- plot_ly() %>%
+  add_trace(data = spy_daily, x = ~date, y = ~close,
+            type = "scatter", mode = "lines",
+            line = list(color = "gray85", width = 0.4),
+            name = "SPY", hoverinfo = "skip")
+
+for (i in 1:nrow(trades)) {
+  t <- trades[i, ]
+  col <- if (t$wl == "Win") "rgba(46,125,50,0.25)" else "rgba(198,40,40,0.25)"
+  combined <- combined %>%
+    add_segments(x = t$date, xend = t$date, y = t$entry, yend = t$exit,
+                 line = list(color = col, width = 0.5),
+                 showlegend = FALSE,
+                 text = t$tooltip_pnl, hoverinfo = "text")
+}
+
+for (sig in names(signal_colors)) {
+  df <- trades %>% filter(signal == sig)
+  combined <- combined %>%
+    add_trace(data = df, x = ~date, y = ~entry,
+              type = "scatter", mode = "markers",
+              marker = list(symbol = signal_symbols[sig], size = 3.5, color = signal_colors[sig], opacity = 0.65),
+              name = sig,
+              text = ~tooltip_entry, hoverinfo = "text")
+}
+
+combined <- combined %>%
+  layout(
+    title = "ORB SPY — Todos los trades · LONG (&#9650;) / SHORT (&#9660;) · Win (verde) / Loss (rojo)",
+    xaxis = list(title = "", rangeslider = list(visible = TRUE, thickness = 0.05)),
+    yaxis = list(title = "Precio SPY (USD)", tickprefix = "$"),
+    legend = list(orientation = "h", y = 1.15),
+    hovermode = "closest"
+  )
+combined
+```
+
+---
+
+## 5. P&L por Trade — Cascada cronológica {.section-title}
+
+*Barras coloreadas por dirección + win/loss. Zoom en X para inspeccionar rachas.*
+
+```{r waterfall-interactive}
+waterfall_colors <- c(
+  "LONG Win" = "#2196F3", "LONG Loss" = "#90CAF9",
+  "SHORT Win" = "#FF9800", "SHORT Loss" = "#FFCC80"
+)
+
+waterfall <- trades %>%
+  plot_ly(x = ~trade_num, y = ~pnl_usd, type = "bar",
+          color = ~signal, colors = waterfall_colors,
+          text = ~tooltip_pnl, hoverinfo = "text",
+          showlegend = TRUE) %>%
+  add_trace(x = ~trade_num, y = ~zoo::rollmean(pnl_usd, 50, fill = NA, align = "right"),
+            type = "scatter", mode = "lines",
+            line = list(color = "black", width = 1.2),
+            name = "Media Movil 50",
+            hoverinfo = "skip") %>%
+  layout(
+    title = "P&L por Trade — LONG (azul) / SHORT (naranja) · Oscuro = Win · Claro = Loss",
+    xaxis = list(title = "Trade #", rangeslider = list(visible = TRUE, thickness = 0.05)),
+    yaxis = list(title = "P&L (USD)", tickprefix = "$"),
+    barmode = "overlay",
+    legend = list(orientation = "h", y = 1.15),
+    hovermode = "closest"
+  )
+waterfall
+```
+
+---
+
+## 6. LONG vs SHORT: Win Rate y P&L por año {.section-title}
+
+```{r yearly-direction}
+yearly_dir <- trades %>%
+  group_by(year = factor(year(date)), direction) %>%
+  summarise(
+    pnl = sum(pnl_usd), 
+    trades = n(), 
+    wr = mean(pnl_usd > 0) * 100,
+    .groups = "drop"
+  )
+
+yearly_dir_plot <- yearly_dir %>%
+  plot_ly(x = ~year, y = ~pnl, color = ~direction,
+          colors = c("LONG" = "#1565C0", "SHORT" = "#E65100"),
+          type = "bar",
+          text = ~sprintf("%s: $%.0f | %d trades | WR %.0f%%", direction, pnl, trades, wr),
+          hoverinfo = "text") %>%
+  layout(
+    title = "P&L Anual — LONG vs SHORT",
+    xaxis = list(title = ""),
+    yaxis = list(title = "P&L (USD)", tickprefix = "$"),
+    barmode = "group",
+    legend = list(orientation = "h", y = 1.1)
+  )
+yearly_dir_plot
+```
+
+---
+
+## 7. LONG vs SHORT — Entradas separadas en facetas {.section-title}
+
+*Cada dirección en su propio panel. Más fácil ver patrones de win/loss.*
+
+```{r facet-direction}
+facet_colors <- c("Win" = "#2E7D32", "Loss" = "#C62828")
+facet_symbols <- c("Win" = "triangle-up", "Loss" = "triangle-down")  # no importa, se usa color
+
+# LONG
+long_entries <- trades %>% filter(direction == "LONG")
+short_entries <- trades %>% filter(direction == "SHORT")
+
+f <- list(family = "Arial", size = 13)
+
+sub1 <- plot_ly() %>%
+  add_trace(data = spy_daily, x = ~date, y = ~close,
+            type = "scatter", mode = "lines", line = list(color = "gray80", width = 0.4),
+            name = "SPY", hoverinfo = "skip", showlegend = FALSE) %>%
+  add_trace(data = long_entries %>% filter(wl == "Win"), x = ~date, y = ~entry,
+            type = "scatter", mode = "markers",
+            marker = list(symbol = "triangle-up", size = 5, color = "#2E7D32", opacity = 0.7),
+            name = "LONG Win", text = ~tooltip_entry, hoverinfo = "text") %>%
+  add_trace(data = long_entries %>% filter(wl == "Loss"), x = ~date, y = ~entry,
+            type = "scatter", mode = "markers",
+            marker = list(symbol = "triangle-up", size = 5, color = "#C62828", opacity = 0.7),
+            name = "LONG Loss", text = ~tooltip_entry, hoverinfo = "text") %>%
+  layout(
+    title = sprintf("ENTRADAS LONG (%d trades, WR %.0f%%, P&L $%.0f)", nrow(long_entries), l_wr, l_pnl),
+    xaxis = list(title = "", rangeslider = list(visible = TRUE, thickness = 0.05)),
+    yaxis = list(title = "Precio SPY (USD)", tickprefix = "$"),
+    legend = list(orientation = "h", y = 1.1)
+  )
+
+sub2 <- plot_ly() %>%
+  add_trace(data = spy_daily, x = ~date, y = ~close,
+            type = "scatter", mode = "lines", line = list(color = "gray80", width = 0.4),
+            name = "SPY", hoverinfo = "skip", showlegend = FALSE) %>%
+  add_trace(data = short_entries %>% filter(wl == "Win"), x = ~date, y = ~entry,
+            type = "scatter", mode = "markers",
+            marker = list(symbol = "triangle-down", size = 5, color = "#2E7D32", opacity = 0.7),
+            name = "SHORT Win", text = ~tooltip_entry, hoverinfo = "text") %>%
+  add_trace(data = short_entries %>% filter(wl == "Loss"), x = ~date, y = ~entry,
+            type = "scatter", mode = "markers",
+            marker = list(symbol = "triangle-down", size = 5, color = "#C62828", opacity = 0.7),
+            name = "SHORT Loss", text = ~tooltip_entry, hoverinfo = "text") %>%
+  layout(
+    title = sprintf("ENTRADAS SHORT (%d trades, WR %.0f%%, P&L $%.0f)", nrow(short_entries), s_wr, s_pnl),
+    xaxis = list(title = "", rangeslider = list(visible = TRUE, thickness = 0.05)),
+    yaxis = list(title = "Precio SPY (USD)", tickprefix = "$"),
+    legend = list(orientation = "h", y = 1.1)
+  )
+
+sub1
+sub2
+```
+
+---
+
+## 8. Rango ORB vs P&L por dirección {.section-title}
+
+*¿Rangos más amplios = más profit en LONG, en SHORT, o en ambos?*
+
+```{r orb-range-interactive}
+range_plot <- trades %>%
+  plot_ly(x = ~orb_range, y = ~pnl_usd, type = "scatter", mode = "markers",
+          color = ~signal, colors = signal_colors,
+          symbol = ~signal, symbols = signal_symbols,
+          marker = list(size = 6, opacity = 0.45),
+          text = ~tooltip_pnl, hoverinfo = "text") %>%
+  layout(
+    title = "Rango ORB vs P&L — LONG (&#9650;) vs SHORT (&#9660;)",
+    xaxis = list(title = "Rango ORB (USD)", tickprefix = "$"),
+    yaxis = list(title = "P&L (USD)", tickprefix = "$"),
+    legend = list(orientation = "h", y = 1.1),
+    hovermode = "closest"
+  )
+range_plot
+```
+
+---
+
+<div style="text-align: center; color: #999; margin-top: 40px; padding: 20px; border-top: 1px solid #eee;">
+ORB SPY Backtest · Alpaca Markets IEX · 1,412 trades · Julio 2020 – Mayo 2026<br>
+<em>&#9650; LONG &nbsp;|&nbsp; &#9660; SHORT &nbsp;|&nbsp; Verde = Win &nbsp;|&nbsp; Rojo = Loss &nbsp;|&nbsp; Scroll para zoom · Arrastrar para pan · Doble clic para reset</em>
+</div>

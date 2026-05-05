@@ -1,0 +1,93 @@
+---
+title: "ORB SPY — Rendimiento Mensual"
+subtitle: "Opening Range Breakout | Capital base: $7,207 (10 acciones x $720.65)"
+author: "Benjamín Solís"
+date: "Mayo 2026"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+geometry: margin=2.5cm
+fontsize: 11pt
+lang: es
+header-includes:
+  - \usepackage{fontspec}
+  - \usepackage{booktabs}
+  - \usepackage{xcolor}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+library(dplyr); library(lubridate); library(knitr)
+
+CAPITAL <- 7206.50
+
+trades <- read.csv("C:/Users/solis/Downloads/classic strategies/orb_trades.csv")
+trades$date <- as.Date(trades$date)
+
+meses_es <- c("Enero","Febrero","Marzo","Abril","Mayo","Junio",
+              "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre")
+
+monthly <- trades %>%
+  mutate(year = year(date), month_num = month(date)) %>%
+  group_by(year, month_num) %>%
+  summarise(
+    pnl      = sum(pnl_usd),
+    n_trades = n(),
+    wr       = mean(pnl_usd > 0) * 100,
+    .groups  = "drop"
+  ) %>%
+  arrange(year, month_num) %>%
+  mutate(
+    Mes        = paste(meses_es[month_num], year),
+    `P&L USD`  = sprintf("%+.2f", pnl),
+    `Retorno`  = sprintf("%+.2f%%", pnl / CAPITAL * 100),
+    `Trades`   = n_trades,
+    `Win Rate` = sprintf("%.0f%%", wr),
+    `Resultado` = ifelse(pnl > 0, "Positivo", "Negativo")
+  ) %>%
+  select(Mes, `P&L USD`, `Retorno`, Trades, `Win Rate`, Resultado)
+
+# Totales
+total_pnl <- sum(trades$pnl_usd)
+```
+
+```{r tabla}
+kable(monthly, booktabs=TRUE, align=c("l","r","r","c","c","c"),
+      caption="Rendimiento mensual — ORB SPY") %>%
+  kableExtra::kable_styling(latex_options=c("hold_position","striped"),
+                            font_size=10, stripe_color="gray!10") %>%
+  kableExtra::column_spec(1, width="4cm") %>%
+  kableExtra::column_spec(6, color=ifelse(monthly$Resultado=="Positivo","green!60!black","red"))
+```
+
+\vspace{0.8cm}
+
+**Resumen:**
+
+```{r resumen}
+library(dplyr)
+resumen <- trades %>%
+  mutate(year = year(as.Date(date)), month_num = month(as.Date(date))) %>%
+  group_by(year, month_num) %>%
+  summarise(pnl = sum(pnl_usd), .groups="drop") %>%
+  summarise(
+    `Meses totales`    = n(),
+    `Meses positivos`  = sum(pnl > 0),
+    `Meses negativos`  = sum(pnl <= 0),
+    `Mejor mes`        = sprintf("%+.2f (%.1f%%)", max(pnl), max(pnl)/CAPITAL*100),
+    `Peor mes`         = sprintf("%+.2f (%.1f%%)", min(pnl), min(pnl)/CAPITAL*100),
+    `P&L total`        = sprintf("%+.2f", sum(pnl)),
+    `Retorno total`    = sprintf("%+.1f%%", sum(pnl)/CAPITAL*100)
+  )
+
+kable(t(resumen), booktabs=TRUE, col.names=c("Valor"),
+      caption="Resumen general") %>%
+  kableExtra::kable_styling(latex_options=c("hold_position"), font_size=10)
+```
+
+\vspace{0.3cm}
+\footnotesize
+\textbf{Código fuente:} \texttt{orb\_backtest\_spy.R} \quad | \quad
+\textbf{Datos:} Massive API (ex-Polygon.io) \quad | \quad
+\textbf{Capital referencia:} 10 acciones × \$720.65 = \$7,207

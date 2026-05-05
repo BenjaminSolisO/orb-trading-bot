@@ -1,0 +1,310 @@
+---
+title: "Estrategias Clásicas de Trading — SPY"
+subtitle: "Validación empírica con datos reales (2024–2026)"
+author: "Benjamín Solís"
+date: "Mayo 2026"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 2
+    number_sections: true
+geometry: margin=2.5cm
+fontsize: 11pt
+lang: es
+header-includes:
+  - \usepackage{fontspec}
+  - \usepackage{tcolorbox}
+  - \tcbuselibrary{skins, breakable}
+  - \usepackage{booktabs}
+  - \usepackage{float}
+  - \usepackage{xcolor}
+  - \definecolor{azulslate}{RGB}{60,90,140}
+  - \definecolor{verdemusgo}{RGB}{60,120,80}
+  - \definecolor{amarillo}{RGB}{255,200,50}
+  - \definecolor{grisclaro}{RGB}{240,240,245}
+  - \newtcolorbox{concepto}[1]{colback=grisclaro, colframe=azulslate, fonttitle=\bfseries, title=#1, breakable}
+  - \newtcolorbox{resultado}[1]{colback=grisclaro, colframe=verdemusgo, fonttitle=\bfseries, title=#1, breakable}
+  - \newtcolorbox{advertencia}[1]{colback=grisclaro, colframe=orange, fonttitle=\bfseries, title=#1, breakable}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+library(dplyr); library(ggplot2); library(scales); library(knitr)
+OUTPUT_DIR <- "C:/Users/solis/Downloads/classic strategies"
+```
+
+\newpage
+
+# Introducción
+
+Este reporte describe tres estrategias clásicas de trading probadas sobre el ETF **SPY** (S&P 500) usando datos reales de 5 minutos desde mayo 2024 hasta mayo 2026 — aproximadamente **2 años y 500 días de mercado**.
+
+\begin{concepto}{¿Qué es un backtest?}
+Un backtest simula cómo habría funcionado una estrategia en el pasado usando datos históricos reales. No garantiza resultados futuros, pero permite evaluar si una idea tiene lógica estadística antes de arriesgar capital real.
+\end{concepto}
+
+**Datos utilizados:**
+
+- **Activo:** SPY (ETF del S\&P 500, el índice más seguido del mundo)
+- **Temporalidad:** velas de 5 minutos
+- **Horario:** 09:30–16:00 hora de Nueva York (horario de mercado)
+- **Fuente:** API de Massive (ex-Polygon.io)
+- **Período:** 2024-05-03 al 2026-05-01
+
+**Parámetros fijos en todas las estrategias:**
+
+- 10 acciones por trade
+- Comisión estimada: \$0.02 por acción (ida y vuelta)
+- Máximo 1 trade por día por estrategia
+
+\newpage
+
+# Estrategia 1: Opening Range Breakout (ORB)
+
+\begin{concepto}{¿Cómo funciona?}
+Al inicio de cada día, el mercado suele moverse dentro de un rango durante los primeros 30 minutos (09:30–10:00). Ese rango se llama \textbf{Opening Range}. La idea es simple: si el precio rompe hacia arriba con fuerza, probablemente siga subiendo. Si rompe hacia abajo, probablemente siga bajando.
+\end{concepto}
+
+## Reglas de la estrategia
+
+**Paso 1 — Calcular el rango:**
+Se toman las primeras 6 velas del día (09:30 a 10:00). El máximo de ese período es el *ORB High* y el mínimo es el *ORB Low*.
+
+**Paso 2 — Esperar la ruptura:**
+
+- Si el precio sube sobre el ORB High **con volumen alto** → entrar **LONG** (comprar)
+- Si el precio cae bajo el ORB Low **con volumen alto** → entrar **SHORT** (vender)
+
+**Paso 3 — Gestión del trade:**
+
+- **Entrada:** ORB High + \$0.01 (confirma que el precio cruzó)
+- **Stop Loss:** lado opuesto del rango (si compré, el stop está en el ORB Low)
+- **Target:** 2 veces el riesgo (ratio 2:1)
+- Si no se alcanza ni stop ni target → cerrar al final del día
+
+```{r orb-diagrama, fig.height=2.5, fig.width=7}
+df <- data.frame(
+  x = c(1,2,3,4,5,6, 7,8,9,10,11,12),
+  y = c(502,501,503,500,502,501, 502,504,506,505,507,508),
+  tipo = c(rep("ORB",6), rep("Post",6))
+)
+ggplot(df, aes(x=x, y=y)) +
+  geom_line(aes(color=tipo), linewidth=1.2) +
+  geom_hline(yintercept=503, linetype="dashed", color="#2196F3", linewidth=0.8) +
+  geom_hline(yintercept=500, linetype="dashed", color="#F44336", linewidth=0.8) +
+  annotate("text", x=12.3, y=503.2, label="ORB High", color="#2196F3", size=3) +
+  annotate("text", x=12.3, y=499.8, label="ORB Low",  color="#F44336", size=3) +
+  annotate("rect", xmin=1, xmax=6, ymin=-Inf, ymax=Inf, alpha=0.08, fill="gray40") +
+  annotate("text", x=3.5, y=508, label="Rango ORB\n(09:30–10:00)", size=2.8, color="gray40") +
+  scale_color_manual(values=c("ORB"="gray50","Post"="#FF9800")) +
+  scale_x_continuous(breaks=c(1,6,7), labels=c("09:30","10:00","10:05")) +
+  labs(title="", x="Hora", y="Precio SPY") +
+  theme_minimal(base_size=10) +
+  theme(legend.position="none")
+```
+
+## Resultados
+
+```{r orb-resultados}
+orb <- data.frame(
+  Métrica = c("Período", "Días evaluados", "Trades ejecutados", "Win Rate",
+              "P&L promedio por win", "P&L promedio por loss",
+              "Profit Factor", "P&L Total", "Máx. Drawdown", "Sharpe anual"),
+  Valor   = c("May 2024 – May 2026", "500", "482 (96% de días)",
+              "60.2%", "+$26.39", "-$17.04", "2.34",
+              "+$4,382", "-$224", "4.90")
+)
+kable(orb, booktabs=TRUE, align=c("l","r"))
+```
+
+\begin{resultado}{Veredicto}
+\textbf{La mejor estrategia probada.} En 2 años generó \$4,382 sobre 10 acciones con un Sharpe de 4.90 (valores sobre 2.0 ya se consideran excelentes). El secreto: SPY tiene una ``apertura de mercado'' real a las 09:30 que concentra órdenes y genera momentum claro en los primeros 30 minutos.
+\end{resultado}
+
+**Archivo de código:** `orb_backtest_spy.R`
+
+\newpage
+
+# Estrategia 2: VWAP Reversion
+
+\begin{concepto}{¿Cómo funciona?}
+El \textbf{VWAP} (Precio Promedio Ponderado por Volumen) es el precio ``justo'' del día según el volumen transado. Cuando el precio se aleja demasiado del VWAP, tiende a volver hacia él — como un elástico. Esta estrategia aprovecha esas correcciones.
+\end{concepto}
+
+## Reglas de la estrategia
+
+**Paso 1 — Calcular el VWAP:**
+Se calcula en tiempo real a lo largo del día. Empieza a las 09:30 y se actualiza con cada vela.
+
+**Paso 2 — Detectar desviación:**
+
+- Si precio cae más de **0.2% bajo el VWAP** Y el **RSI < 45** (sobrevendido) → entrar LONG
+- Si precio sube más de **0.2% sobre el VWAP** Y el **RSI > 55** (sobrecomprado) → entrar SHORT
+
+**Paso 3 — Gestión:**
+
+- **Target:** precio vuelve al VWAP
+- **Stop:** 2× la distancia al VWAP al momento de entrada
+
+## El problema: días con tendencia
+
+En días donde SPY sube o baja fuerte todo el día (*trending days*), el precio se aleja del VWAP y **no vuelve**. Apostar a la reversión en esos días genera pérdidas grandes.
+
+**Solución — Filtro ADX:**
+
+\begin{advertencia}{ADX: indicador de fuerza de tendencia}
+El \textbf{ADX} mide qué tan fuerte es la tendencia. Un ADX bajo (< 25) indica mercado lateral o sin dirección clara — ideal para estrategias de reversión. Un ADX alto (> 25) indica tendencia fuerte — peligroso para VWAP.
+\end{advertencia}
+
+## Comparación de versiones
+
+```{r vwap-comparacion}
+vwap <- data.frame(
+  Versión      = c("Base (sin filtro)", "Band 0.4%", "Con filtro ADX<25"),
+  Trades       = c(578, 280, 289),
+  `Win Rate`   = c("62.6%","64.6%","69.6%"),
+  `P&L Total`  = c("-$170", "+$948", "+$1,175"),
+  `Max DD`     = c("-$632","-$194","-$89"),
+  Sharpe       = c("-0.26","1.58","2.77")
+)
+kable(vwap, booktabs=TRUE, align=c("l","r","r","r","r","r"))
+```
+
+\begin{resultado}{Veredicto}
+Sin filtro, la estrategia pierde dinero. Con el filtro ADX la estrategia gana \$1,175 con un Sharpe de 2.77 y drawdown mínimo de solo \$89. El filtro es esencial: solo operar cuando el mercado no tiene tendencia.
+\end{resultado}
+
+**Archivos de código:**
+
+- Versión base: `vwap_reversion_spy.R`
+- Con filtro ADX: `vwap_v3_adx_filter.R`
+
+\newpage
+
+# Estrategia 3: Gap and Go
+
+\begin{concepto}{¿Cómo funciona?}
+Un \textbf{gap} ocurre cuando el precio abre muy por encima o por debajo del cierre del día anterior. Si además la primera vela del día confirma esa dirección (cierra en el mismo sentido del gap), se puede operar ``a favor'' del gap esperando que continúe el movimiento.
+\end{concepto}
+
+## Reglas de la estrategia
+
+**Paso 1 — Detectar el gap:**
+Al abrir el mercado (09:30), comparar el precio de apertura con el cierre del día anterior.
+
+- Si la diferencia supera **0.3%** → hay gap relevante
+
+**Paso 2 — Confirmar con primera vela:**
+
+- Gap alcista + primera vela cierra arriba → entrar LONG
+- Gap bajista + primera vela cierra abajo → entrar SHORT
+
+**Paso 3 — Gestión:**
+
+- **Entrada:** close de la primera vela
+- **Stop:** low/high de esa misma vela
+- **Target:** 2:1 RR
+
+## Resultado por tipo de gap
+
+```{r gap-direccion}
+gap_dir <- data.frame(
+  Tipo         = c("Gap Down (bajista)", "Gap Up (alcista)"),
+  Trades       = c(37, 50),
+  `Win Rate`   = c("56.8%", "34.0%"),
+  `P&L Total`  = c("+$241", "+$6"),
+  `Gap prom.`  = c("0.88%","0.69%")
+)
+kable(gap_dir, booktabs=TRUE, align=c("l","r","r","r","r"))
+```
+
+## Resultados generales
+
+```{r gap-resultados}
+gap <- data.frame(
+  Métrica  = c("Días con señal","Trades","Win Rate","Profit Factor","P&L Total","Máx. Drawdown","Sharpe"),
+  Valor    = c("87 (17% de días)","87","43.7%","1.41","+$247","-$60","0.99")
+)
+kable(gap, booktabs=TRUE, align=c("l","r"))
+```
+
+\begin{advertencia}{Hallazgo importante}
+Los gaps bajistas (\textit{Gap Down}) tienen win rate de 56.8\% y generan casi todo el P\&L. Los gaps alcistas apenas empatan. SPY tiende a rellenar los gaps bajistas porque activan ventas de pánico que luego se revierten, pero los gaps alcistas reflejan momentum que sigue.
+\end{advertencia}
+
+\begin{resultado}{Veredicto}
+Estrategia válida pero con pocas oportunidades (87 trades en 2 años = ~3–4 por mes). El drawdown máximo es solo \$60, lo que indica señales de alta calidad. Ideal como complemento, no como estrategia principal.
+\end{resultado}
+
+**Archivo de código:** `gap_and_go_spy.R`
+
+\newpage
+
+# Portfolio: ORB + VWAP ADX
+
+La combinación de ORB y VWAP+ADX es especialmente poderosa porque operan en **condiciones opuestas**:
+
+- **ORB** funciona en días con movimiento claro (tendencia tras la apertura)
+- **VWAP+ADX** funciona en días laterales (ADX bajo, sin dirección)
+
+Ambas estrategias son **complementarias** — cuando una no tiene señal o pierde, la otra tiende a compensar.
+
+```{r portfolio-resultados}
+port <- data.frame(
+  Estrategia     = c("ORB solo", "VWAP+ADX solo", "Portfolio combinado"),
+  Trades         = c(482, 289, 771),
+  `P&L Total`    = c("$4,382","$1,175","$5,557"),
+  `Máx. DD`      = c("-$224","-$89","-$186"),
+  Sharpe         = c("4.90","2.77","5.93")
+)
+kable(port, booktabs=TRUE, align=c("l","r","r","r","r"))
+```
+
+\begin{resultado}{Resultado clave: correlación entre estrategias = --0.14}
+La correlación negativa (-0.14) confirma que las estrategias se comportan de manera independiente. El portfolio reduce el drawdown de \$224 a \$186 y sube el Sharpe de 4.90 a 5.93, sin agregar riesgo significativo.
+\end{resultado}
+
+**Archivo de código:** `portfolio_orb_vwap.R`
+
+\newpage
+
+# Resumen General
+
+```{r resumen-final}
+resumen <- data.frame(
+  `#` = c(1,2,3,4,"P"),
+  Estrategia    = c("ORB","VWAP+ADX","Gap and Go","ORB BTC (mejor versión)","Portfolio ORB+VWAP"),
+  Activo        = c("SPY","SPY","SPY","BTC-USD","SPY"),
+  `P&L Total`   = c("$4,382","$1,175","$247","$531","$5,557"),
+  Sharpe        = c("4.90","2.77","0.99","0.12","5.93"),
+  Recomendación = c("✓ Usar","✓ Usar","✓ Complemento","✗ Evitar","✓ Portafolio final")
+)
+kable(resumen, booktabs=TRUE, align=c("c","l","c","r","r","c"))
+```
+
+## Conclusiones
+
+1. **SPY tiene estructura** — las tres estrategias funcionan porque el mercado americano tiene patrones repetibles en la apertura y en los retornos al precio justo.
+
+2. **BTC no tiene apertura real** — al operar 24/7, no existe un rango de apertura con significado. ORB en BTC genera pérdidas importantes.
+
+3. **El contexto importa** — VWAP sin filtro pierde dinero. Con ADX gana. La misma señal en el contexto equivocado es una trampa.
+
+4. **Diversificar estrategias reduce riesgo** — combinar ORB y VWAP baja el drawdown porque se activan en condiciones distintas.
+
+5. **Backtesting $\neq$ garantía** — estos resultados son sobre datos históricos. El mercado cambia y es necesario monitorear el desempeño en tiempo real.
+
+---
+
+\begin{concepto}{Archivos de código}
+\begin{itemize}
+  \item \texttt{orb\_backtest\_spy.R} — Estrategia ORB en SPY
+  \item \texttt{vwap\_reversion\_spy.R} — VWAP Reversion base
+  \item \texttt{vwap\_v3\_adx\_filter.R} — VWAP con filtro ADX
+  \item \texttt{gap\_and\_go\_spy.R} — Gap and Go en SPY
+  \item \texttt{orb\_backtest\_btc.R} — ORB en BTC-USD
+  \item \texttt{portfolio\_orb\_vwap.R} — Portfolio combinado ORB + VWAP
+\end{itemize}
+Todos los archivos están en: \texttt{C:/Users/solis/Downloads/classic strategies/}
+\end{concepto}

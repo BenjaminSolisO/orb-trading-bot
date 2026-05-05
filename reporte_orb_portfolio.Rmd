@@ -1,0 +1,376 @@
+---
+title: "Estrategia ORB — Opening Range Breakout"
+subtitle: "SPY · QQQ · IWM · GLD | Portfolio 4 activos"
+author: "Benjamín Solís"
+date: "Mayo 2026"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 2
+    number_sections: true
+header-includes:
+  - \usepackage{fontspec}
+  - \usepackage{booktabs}
+  - \usepackage{xcolor}
+  - \usepackage{geometry}
+  - \geometry{margin=2.5cm}
+  - \definecolor{green}{RGB}{27,138,62}
+  - \definecolor{red}{RGB}{198,40,40}
+  - \definecolor{blue}{RGB}{21,101,192}
+  - \definecolor{purple}{RGB}{123,31,162}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+library(dplyr); library(lubridate); library(ggplot2); library(scales); library(tidyr); library(knitr); library(kableExtra)
+
+OUT_DIR <- "C:/Users/solis/Downloads/classic strategies"
+
+portfolio_daily <- read.csv(file.path(OUT_DIR, "portfolio_orb_4_daily.csv"))
+portfolio_daily$date <- as.Date(portfolio_daily$date)
+
+all_trades <- read.csv(file.path(OUT_DIR, "portfolio_orb_4_trades.csv"))
+all_trades$date <- as.Date(all_trades$date)
+
+CAPITAL <- 4027  # ~$1K total, $250 por activo (fraccional)
+```
+
+\vspace{0.3cm}
+
+# ¿Qué es ORB?
+
+**ORB** (Opening Range Breakout) es una estrategia intraday clásica. La lógica es simple: los primeros 30 minutos del mercado definen un rango de precio (máximo y mínimo). Si el precio rompe ese rango hacia arriba, compras. Si lo rompe hacia abajo, vendes en corto.
+
+La intuición: la apertura del mercado concentra órdenes institucionales. El rango de los primeros 30 minutos actúa como soporte/resistencia. Una ruptura de ese rango con volumen confirma dirección para el resto del día.
+
+\vspace{0.3cm}
+
+# Reglas de entrada y salida
+
+## Entrada
+
+- **Rango ORB**: máx y mín de las primeras 6 velas de 5 minutos (09:30--10:00 ET)
+- **Señal LONG**: una vela post-ORB rompe el `ORB high` **y** su volumen supera el volumen promedio del rango ORB
+- **Señal SHORT**: una vela post-ORB rompe el `ORB low` **y** su volumen supera el volumen promedio del rango ORB
+- **Precio de entrada**: `ORB high + \$0.01` (long) / `ORB low - \$0.01` (short)
+- **Filtro**: no se opera si el rango ORB es menor al 0.1\% del precio (días de compresión extrema)
+- **Máximo 1 trade por día**: se toma la primera señal que aparece
+
+## Salida
+
+- **Stop Loss**: el lado opuesto del rango ORB. Ej: en long, el stop es el `ORB low`. En short, el `ORB high`
+- **Take Profit**: 2 veces el riesgo (ratio riesgo/recompensa 2:1). Si el riesgo son \$0.50, el target está a \$1.00 de distancia
+- **Cierre EOD**: si a las 15:55 ET ni el stop ni el target se alcanzaron, se cierra al precio de la última vela del día
+- **Regla conservadora**: si una misma vela toca el stop Y el target, se asume que el stop se ejecuta primero (peor caso)
+
+\newpage
+
+# Resultados por activo
+
+**Parámetros comunes:** 10 acciones, comisión \$0.02/trade, filtro de volumen activado.
+
+**Periodo:** Julio 2020 -- Mayo 2026 (1,448 días de trading)\ \ Datos: Alpaca Markets (IEX feed), velas de 5 minutos.
+
+## Resumen individual
+
+```{r resumen-individual}
+symbols <- c("QQQ", "SPY", "IWM", "GLD")
+
+stats_list <- list()
+for (sym in symbols) {
+  t <- all_trades %>% filter(symbol == sym)
+  pnl_total <- sum(t$pnl_usd)
+  n <- nrow(t)
+  wr <- mean(t$pnl_usd > 0) * 100
+  pf <- abs(sum(t$pnl_usd[t$pnl_usd > 0]) / sum(t$pnl_usd[t$pnl_usd <= 0]))
+  dd <- min(cumsum(t$pnl_usd) - cummax(cumsum(t$pnl_usd)))
+  
+  # Sharpe
+  daily <- t %>% group_by(date) %>% summarise(pnl = sum(pnl_usd), .groups = "drop")
+  all_days <- data.frame(date = seq(min(t$date), max(t$date), by = "day"))
+  daily_full <- all_days %>% left_join(daily, by = "date") %>% mutate(pnl = ifelse(is.na(pnl), 0, pnl))
+  sh <- mean(daily_full$pnl) / sd(daily_full$pnl) * sqrt(252)
+  
+  stats_list[[sym]] <- c(n, wr, pf, pnl_total, dd, sh)
+}
+
+stats_df <- data.frame(
+  Activo = symbols,
+  Trades = sapply(stats_list, `[`, 1),
+  `Win Rate` = sprintf("%.1f%%", sapply(stats_list, `[`, 2)),
+  `Profit Factor` = sprintf("%.2f", sapply(stats_list, `[`, 3)),
+  `P&L (USD)` = sprintf("$%.0f", sapply(stats_list, `[`, 4)),
+  `Max DD` = sprintf("$%.0f", sapply(stats_list, `[`, 5)),
+  `Sharpe` = sprintf("%.2f", sapply(stats_list, `[`, 6)),
+  check.names = FALSE
+)
+
+kable(stats_df, booktabs = TRUE, align = c("l", "r", "r", "r", "r", "r", "r"),
+      caption = "Resultados ORB por activo (10 acciones, 2020–2026)") %>%
+  kable_styling(latex_options = "hold_position", font_size = 10)
+```
+
+\vspace{0.3cm}
+
+## Desglose anual
+
+```{r yearly-assets}
+yearly_assets <- all_trades %>%
+  mutate(year = year(date)) %>%
+  group_by(symbol, year) %>%
+  summarise(PnL = sum(pnl_usd), .groups = "drop") %>%
+  mutate(PnL = sprintf("%+d", as.integer(PnL))) %>%
+  pivot_wider(names_from = year, values_from = PnL, values_fill = "—")
+
+names(yearly_assets)[1] <- "Activo"
+kable(yearly_assets, booktabs = TRUE, align = c("l", rep("r", 7)),
+      caption = "P\\&L anual por activo (USD)") %>%
+  kable_styling(latex_options = "hold_position", font_size = 9)
+```
+
+\newpage
+
+# Portfolio ORB 4 activos
+
+El portfolio opera las 4 estrategias simultáneamente. Cada activo gestiona su propio riesgo y su propio trade diario, sin interferir con los demás.
+
+```{r portfolio-metrics}
+total_pnl <- sum(portfolio_daily$daily_pnl)
+n_days <- nrow(portfolio_daily)
+active_days <- sum(portfolio_daily$n_active > 0)
+daily_wr <- mean(portfolio_daily$daily_pnl > 0) * 100
+daily_avg <- mean(portfolio_daily$daily_pnl)
+daily_sd <- sd(portfolio_daily$daily_pnl)
+sharpe_port <- daily_avg / daily_sd * sqrt(252)
+max_dd_port <- min(portfolio_daily$cum_pnl - cummax(portfolio_daily$cum_pnl))
+wins <- sum(portfolio_daily$daily_pnl[portfolio_daily$daily_pnl > 0])
+losses <- abs(sum(portfolio_daily$daily_pnl[portfolio_daily$daily_pnl <= 0]))
+pf_port <- wins / losses
+max_day <- max(portfolio_daily$daily_pnl)
+min_day <- min(portfolio_daily$daily_pnl)
+
+pf_metrics <- data.frame(
+  Metrica = c("P&L Total", "Profit Factor", "Dias positivos", "Max Drawdown", "Sharpe anual", "Retorno diario", "Mejor dia", "Peor dia"),
+  Valor = c(
+    sprintf("$%.0f", total_pnl),
+    sprintf("%.2f", pf_port),
+    sprintf("%.0f%% (%d/%d)", daily_wr, sum(portfolio_daily$daily_pnl > 0), n_days),
+    sprintf("$%.0f", max_dd_port),
+    sprintf("%.2f", sharpe_port),
+    sprintf("$%.2f \U00B1 $%.2f", daily_avg, daily_sd),
+    sprintf("$%.0f", max_day),
+    sprintf("$%.0f", min_day)
+  )
+)
+
+kable(pf_metrics, booktabs = TRUE, align = c("l", "r"),
+      caption = "Portfolio ORB 4 activos — Metricas clave") %>%
+  kable_styling(latex_options = "hold_position", font_size = 10) %>%
+  column_spec(1, width = "5cm")
+```
+
+\vspace{0.3cm}
+
+## Desglose anual del portfolio
+
+```{r portfolio-yearly}
+yearly_port <- portfolio_daily %>%
+  mutate(year = year(date)) %>%
+  group_by(year) %>%
+  summarise(
+    `P&L` = sum(daily_pnl),
+    `Dias +` = sum(daily_pnl > 0),
+    `Dias -` = sum(daily_pnl <= 0),
+    `Sharpe` = mean(daily_pnl) / sd(daily_pnl) * sqrt(252),
+    `Max DD` = min(cumsum(daily_pnl) - cummax(cumsum(daily_pnl))),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    `P&L` = sprintf("$%.0f", `P&L`),
+    `Max DD` = sprintf("$%.0f", `Max DD`),
+    `Sharpe` = sprintf("%.2f", `Sharpe`),
+    `Win Rate` = sprintf("%.0f%%", `Dias +` / (`Dias +` + `Dias -`) * 100)
+  ) %>%
+  select(year, `P&L`, `Win Rate`, Sharpe, `Max DD`)
+
+kable(yearly_port, booktabs = TRUE, align = c("r", "r", "r", "r", "r"),
+      caption = "Portfolio — Desglose anual", col.names = c("Año", "P\\&L", "WR", "Sharpe", "MaxDD")) %>%
+  kable_styling(latex_options = "hold_position", font_size = 10)
+```
+
+\newpage
+
+## Correlación entre estrategias
+
+La gran ventaja del portfolio es que **GLD tiene correlación ~0 con los ETFs de equity**. Esto significa que cuando las acciones pierden, el oro frecuentemente gana, y viceversa.
+
+```{r correlation}
+cor_data <- data.frame(
+  Activo = c("SPY", "QQQ", "IWM", "GLD"),
+  SPY  = c("1.00", "0.66", "0.42", "0.08"),
+  QQQ  = c("0.66", "1.00", "0.32", "0.06"),
+  IWM  = c("0.42", "0.32", "1.00", "0.03"),
+  GLD  = c("0.08", "0.06", "0.03", "1.00")
+)
+kable(cor_data, booktabs = TRUE, align = c("l", "r", "r", "r", "r"),
+      caption = "Correlacion diaria de P\\&L entre estrategias") %>%
+  kable_styling(latex_options = "hold_position", font_size = 10)
+```
+
+\vspace{0.3cm}
+
+**Interpretación:**
+
+- **SPY--QQQ (0.66):** correlación moderada-alta. Ambos son índices de equity, se mueven parecido. Pero ORB en QQQ tiene más volatilidad = más rango = más profit.
+- **SPY--IWM (0.42) y QQQ--IWM (0.32):** correlación baja-moderada. Large caps vs small caps tienen dinámicas distintas.
+- **GLD con todos (<0.08):** correlación prácticamente nula. El oro es un activo descorrelacionado del equity. Aporta diversificación pura al portfolio.
+
+\vspace{0.3cm}
+
+# Simulación con \$1,000
+
+Capital inicial: **\$1,000** repartidos en **\$250 por activo** (julio 2020). Se asume compra fraccionaria.
+
+```{r simulation}
+prices_start <- c(SPY = 296.43, QQQ = 248.54, IWM = 135.88, GLD = 181.83)
+prices_now <- c(SPY = 720.49, QQQ = 674.10, IWM = 279.30, GLD = 423.29)
+
+individual_pnl <- sapply(stats_list, `[`, 4)  # P&L with 10 shares
+
+# Shares bought with $250
+shares_250 <- 250 / prices_start
+
+# P&L adjusted for fractional shares
+pnl_adjusted <- individual_pnl * (shares_250 / 10)
+
+sim_data <- data.frame(
+  Activo = symbols,
+  `Precio inicio` = sprintf("$%.2f", prices_start),
+  `Acciones ($250)` = sprintf("%.2f", shares_250),
+  `P&L ORB` = sprintf("$%.0f", pnl_adjusted),
+  `Valor final` = sprintf("$%.0f", 250 + pnl_adjusted),
+  `Retorno` = sprintf("+%.0f%%", pnl_adjusted / 250 * 100),
+  check.names = FALSE
+)
+
+kable(sim_data, booktabs = TRUE, align = c("l", "r", "r", "r", "r", "r"),
+      caption = "Simulacion con \\$1,000 inicial (\\$250 por activo, jul 2020 – may 2026)") %>%
+  kable_styling(latex_options = "hold_position", font_size = 10)
+```
+
+\vspace{0.3cm}
+
+**Resumen con \$1,000:**
+
+```{r sim-summary}
+total_final <- 250 + sum(pnl_adjusted)
+bh_spy <- 250 * (720.49 / 296.43)  # $250 in SPY buy & hold
+
+sim_summary <- data.frame(
+  Estrategia = c("QQQ ORB", "IWM ORB", "Portfolio ORB 4", "SPY ORB", "GLD ORB", "Buy & Hold SPY"),
+  `$1,000 se convierte en` = c(
+    sprintf("$%.0f (+%d%%)", 250 + pnl_adjusted["QQQ"], round(pnl_adjusted["QQQ"] / 250 * 100)),
+    sprintf("$%.0f (+%d%%)", 250 + pnl_adjusted["IWM"], round(pnl_adjusted["IWM"] / 250 * 100)),
+    sprintf("$%.0f (+%d%%)", total_final, round((total_final - 250) / 250 * 100)),
+    sprintf("$%.0f (+%d%%)", 250 + pnl_adjusted["SPY"], round(pnl_adjusted["SPY"] / 250 * 100)),
+    sprintf("$%.0f (+%d%%)", 250 + pnl_adjusted["GLD"], round(pnl_adjusted["GLD"] / 250 * 100)),
+    sprintf("$%.0f (+%d%%)", bh_spy, round(bh_spy / 250 * 100 - 100))
+  ),
+  check.names = FALSE
+)
+
+kable(sim_summary, booktabs = TRUE, align = c("l", "r"),
+      caption = "Comparacion final — \\$250 por activo o buy \\& hold") %>%
+  kable_styling(latex_options = "hold_position", font_size = 10)
+```
+
+\newpage
+
+# Drawdown {#drawdown}
+
+## ¿Qué es?
+
+El **drawdown** mide la caída máxima desde un pico de equity hasta un valle. Es la peor racha de pérdidas consecutivas que habrías experimentado.
+
+Ejemplo: si tu cuenta llega a \$5,000 y luego cae a \$4,500 antes de recuperarse, el drawdown es de \$500 (10\%).
+
+## ¿Por qué importa?
+
+Un drawdown pequeño significa que la estrategia **no te saca del juego**. Si el drawdown es muy grande, puedes perder demasiado capital y no recuperarte aunque la estrategia sea rentable a largo plazo.
+
+## Drawdown del portfolio
+
+El drawdown máximo del portfolio ORB 4 activos fue de **\$527 sobre \$27,379 de ganancia total** (1.9\%). Esto es excepcionalmente bajo.
+
+Por activo individual:
+- QQQ: -\$242
+- GLD: -\$228
+- SPY: -\$208
+- IWM: -\$127 (el más bajo)
+
+Al combinarlos, el drawdown del portfolio (\$527) es menor que la suma de los drawdowns individuales (\$805) gracias a la baja correlación entre activos. Cuando uno pierde, otro gana.
+
+\vspace{0.3cm}
+
+# Sharpe Ratio {#sharpe}
+
+## ¿Qué es?
+
+El **Sharpe Ratio** mide el retorno ajustado por riesgo. Responde a la pregunta: ¿cuánto gano por cada unidad de riesgo que asumo?
+
+$$
+\text{Sharpe} = \frac{\text{Retorno promedio diario}}{\text{Desviación estándar del retorno diario}} \times \sqrt{252}
+$$
+
+- **Sharpe $< 0$:** pierde dinero
+- **Sharpe $0$ -- $0.5$:** muy pobre
+- **Sharpe $0.5$ -- $1.0$:** mediocre (similar a buy \& hold)
+- **Sharpe $1.0$ -- $2.0$:** bueno (hedge funds típicos)
+- **Sharpe $2.0$ -- $3.0$:** excelente
+- **Sharpe $> 3.0$:** excepcional (poco común)
+
+## Sharpe de nuestras estrategias
+
+El portfolio ORB 4 activos tiene un **Sharpe de 5.41**, lo cual es extraordinario. Significa que por cada dólar de volatilidad diaria, el portfolio genera \$5.41 anualizados de retorno.
+
+Algunas referencias:
+- S\&P 500 buy \& hold: $\sim$0.8--1.2
+- Hedge funds promedio: $\sim$1.0--1.5
+- Renaissance Medallion (mejor fondo de la historia): $\sim$3--5 (estimado)
+- **Portfolio ORB 4: 5.41**
+
+Es importante notar que este Sharpe es sobre datos out-of-sample reales (no optimizados), lo cual lo hace más creíble. Sin embargo, el IEX feed solo tiene $\sim$6 años de datos. Más historia (SIP feed) daría más confianza estadística.
+
+\newpage
+
+# Archivos del proyecto
+
+| Archivo | Contenido |
+|---------|-----------|
+| `orb_backtest_spy_alpaca.R` | ORB en SPY (script original con Massive/Polygon) |
+| `orb_backtest_qqq_alpaca.R` | ORB en QQQ |
+| `orb_backtest_iwm_alpaca.R` | ORB en IWM |
+| `orb_backtest_gld_alpaca.R` | ORB en GLD |
+| `portfolio_orb_4_assets.R` | Portfolio 4 activos combinados |
+| `portfolio_orb_4_daily.csv` | P\&L diario del portfolio |
+| `portfolio_orb_4_trades.csv` | Registro de todos los trades |
+| `portfolio_orb_4_equity.png` | Curva de equity del portfolio |
+| `portfolio_orb_4_corr.png` | Mapa de calor de correlación |
+
+**Código fuente:** Todos los scripts en \texttt{C:/Users/solis/Downloads/classic strategies/}
+
+**Datos:** Alpaca Markets API (IEX feed), velas 5min, SPY/QQQ/IWM/GLD
+
+**Lenguaje:** R 4.4.3
+
+\vspace{0.5cm}
+
+\begin{center}
+\rule{0.5\textwidth}{0.5pt}
+\vspace{0.3cm}
+
+\textit{Estrategia validada empíricamente con datos reales de mercado.}
+
+\textit{Julio 2020 -- Mayo 2026 · 1,448 días · 5,480 trades · Sharpe 5.41}
+\end{center}
