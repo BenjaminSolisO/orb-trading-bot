@@ -343,7 +343,7 @@ def main():
                 account_summary()
 
             # ── Skip non-trading days ──
-            if n.weekday() >= 5 or not market_is_open_now():
+            if n.weekday() >= 5 or not market_is_open():
                 next_check = (n + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
                 sleep_sec = min((next_check - n).total_seconds(), 3600)
                 if sleep_sec > 0:
