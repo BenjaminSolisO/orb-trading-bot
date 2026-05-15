@@ -10,7 +10,7 @@ Ejecucion:   python orb_live_bot.py
              Ctrl+C para detener
 """
 
-import os, sys, time, signal, csv, logging
+import os, sys, time, signal, csv, logging, math
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -38,7 +38,7 @@ ALPACA_SECRET   = os.environ.get("ALPACA_SECRET", "")
 PAPER           = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 
 SYMBOLS         = ["SPY", "QQQ", "IWM", "GLD"]
-CAPITAL_PER     = int(os.environ.get("CAPITAL_PER", "250"))
+CAPITAL_PER     = int(os.environ.get("CAPITAL_PER", "1000"))
 
 ORB_CANDLES     = 6
 RR_RATIO        = float(os.environ.get("RR_RATIO", "2.5"))
@@ -65,16 +65,19 @@ trade_client = TradingClient(ALPACA_KEY, ALPACA_SECRET, paper=PAPER)
 data_client  = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
 
 # =============================================================================
-# HOLIDAY CHECK (via Alpaca Clock API)
+# HOLIDAY CHECK (via Alpaca Clock API) — cached 60s to avoid rate limits
 # =============================================================================
+_mkt_cache: dict = {"v": False, "t": 0.0}
+
 def market_is_open_now() -> bool:
-    """Check if US stock market is open right now using Alpaca Clock API."""
+    if time.monotonic() - _mkt_cache["t"] < 60:
+        return _mkt_cache["v"]
     try:
-        clock = trade_client.get_clock()
-        return clock.is_open
+        _mkt_cache["v"] = trade_client.get_clock().is_open
     except Exception:
-        # Fallback: assume closed if API fails
-        return False
+        _mkt_cache["v"] = False
+    _mkt_cache["t"] = time.monotonic()
+    return _mkt_cache["v"]
 
 # =============================================================================
 # STATE MACHINE
@@ -140,22 +143,17 @@ def fetch_bar(symbol: str) -> Optional[dict]:
             symbol_or_symbols=symbol,
             timeframe=FRAME_5MIN,
             limit=5,
-            start=(now_et() - timedelta(hours=7)).isoformat()
+            start=(now_et() - timedelta(minutes=15)).isoformat()
         )
         bars = data_client.get_stock_bars(req)
-        if not bars or not bars.data:
+        if not bars or not bars.data or symbol not in bars.data:
             return None
-        
+
         today = now_et().date()
-        # Walk backwards to find the most recent bar from today
-        for b in reversed(bars.data):
-            bar_date = b.timestamp.date() if hasattr(b.timestamp, 'date') else b.timestamp
-            if isinstance(bar_date, datetime):
-                bar_date = bar_date.date()
-            # Reject bars from other days or pre-market
-            bar_hour = b.timestamp.hour if hasattr(b.timestamp, 'hour') else b.timestamp.hour
-            bar_min  = b.timestamp.minute if hasattr(b.timestamp, 'minute') else b.timestamp.minute
-            bar_minutes = bar_hour * 60 + bar_min
+        for b in reversed(bars.data[symbol]):
+            bar_et = b.timestamp.astimezone(ET)
+            bar_date = bar_et.date()
+            bar_minutes = bar_et.hour * 60 + bar_et.minute
             if bar_date == today and bar_minutes >= 565 and bar_minutes <= 955:
                 return {
                     "t": b.timestamp,
@@ -171,8 +169,41 @@ def current_price(symbol: str) -> float:
     bar = fetch_bar(symbol)
     return bar["c"] if bar else 0
 
-def shares_for(price: float) -> float:
-    return round(CAPITAL_PER / price, 6) if price > 0 else 0
+def seed_orb_if_late(sym: str):
+    """If bot starts/restarts past ORB window, replay historical ORB bars."""
+    try:
+        today = now_et().date()
+        orb_start = datetime(today.year, today.month, today.day, 9, 30, tzinfo=ET)
+        orb_end   = datetime(today.year, today.month, today.day, 10, 1, tzinfo=ET)
+        req = StockBarsRequest(
+            symbol_or_symbols=sym,
+            timeframe=FRAME_5MIN,
+            start=orb_start.isoformat(),
+            end=orb_end.isoformat(),
+        )
+        bars = data_client.get_stock_bars(req)
+        if not bars or not bars.data or sym not in bars.data:
+            state[sym]["s"] = State.DONE
+            log.warning(f"  {sym}: no ORB bars in history, skipping today")
+            return
+        orb_bars = [
+            {"t": b.timestamp, "o": float(b.open), "h": float(b.high),
+             "l": float(b.low),  "c": float(b.close), "v": float(b.volume)}
+            for b in bars.data[sym]
+        ]
+        if len(orb_bars) < ORB_CANDLES:
+            state[sym]["s"] = State.DONE
+            log.warning(f"  {sym}: only {len(orb_bars)} ORB bars available, skipping today")
+            return
+        for b in orb_bars[:ORB_CANDLES]:
+            process_bar(sym, b)
+        log.info(f"  {sym}: ORB seeded from history | H={state[sym]['orb_h']:.2f} L={state[sym]['orb_l']:.2f}")
+    except Exception as e:
+        log.warning(f"  {sym}: ORB seed error: {e}")
+        state[sym]["s"] = State.DONE
+
+def shares_for(price: float) -> int:
+    return max(1, math.floor(CAPITAL_PER / price)) if price > 0 else 1
 
 def submit_trade(sym: str, direction: str, entry: float, stop: float, target: float, shares: float):
     """Submit market entry with bracket (SL + TP)."""
@@ -197,8 +228,8 @@ def submit_trade(sym: str, direction: str, entry: float, stop: float, target: fl
         order = trade_client.submit_order(
             order_data=MarketOrderRequest(
                 symbol=sym, qty=shares, side=side, time_in_force=TimeInForce.DAY,
-                stop_loss=StopLossRequest(stop_price=str(sl_price)),
-                take_profit=TakeProfitRequest(limit_price=str(tp_price))
+                stop_loss=StopLossRequest(stop_price=sl_price),
+                take_profit=TakeProfitRequest(limit_price=tp_price)
             )
         )
         log.info(f"  {sym} {direction}: E=${entry:.2f} SL=${sl_price:.2f} TP=${tp_price:.2f} | ID={order.id}")
@@ -341,6 +372,11 @@ def main():
                 seen_bars = {s: None for s in SYMBOLS}
                 log.info(f"\n=== {today} ({n.strftime('%A')}) ===\n")
                 account_summary()
+                # Late start: ORB window already passed — seed from history
+                if orb_phase() in ("mon", "eod"):
+                    log.info("Late start detected — seeding ORB from history...")
+                    for sym in SYMBOLS:
+                        seed_orb_if_late(sym)
 
             # ── Skip non-trading days ──
             if n.weekday() >= 5 or not market_is_open():
