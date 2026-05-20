@@ -51,11 +51,13 @@ TRADE_LOG       = Path("orb_live_trades.csv")
 # =============================================================================
 # LOGGING
 # =============================================================================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
-)
+class _ETFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        return datetime.fromtimestamp(record.created, ET).strftime("%H:%M:%S ET")
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_ETFormatter("%(asctime)s [%(levelname)s] %(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger("ORB")
 
 # =============================================================================
