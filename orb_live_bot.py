@@ -93,7 +93,8 @@ class State:
 state = {}
 for sym in SYMBOLS:
     state[sym] = {"s": State.WAITING, "bars": [], "orb_h": 0, "orb_l": 0,
-                  "avg_vol": 0, "entry": 0, "stop": 0, "target": 0, "dir": ""}
+                  "avg_vol": 0, "entry": 0, "stop": 0, "target": 0, "dir": "",
+                  "monitor_bars": []}
 
 run_bot = True
 
@@ -307,39 +308,64 @@ def process_bar(sym: str, bar: dict):
         orb_h = s["orb_h"]; orb_l = s["orb_l"]; avg_vol = s["avg_vol"]
         vol_ok = not VOLUME_FILTER or bar["v"] > avg_vol
 
-        if bar["h"] > orb_h and vol_ok:
-            entry = orb_h + 0.01
-            stop = orb_l
-            risk = entry - stop
-            target = entry + risk * RR_RATIO
-            px = current_price(sym) or entry
-            sh = shares_for(px)
+        if bar["h"] > orb_h:
+            if vol_ok:
+                entry = orb_h + 0.01
+                stop = orb_l
+                risk = entry - stop
+                target = entry + risk * RR_RATIO
+                px = current_price(sym) or entry
+                sh = shares_for(px)
 
-            s["entry"] = entry; s["stop"] = stop; s["target"] = target
-            s["dir"] = "LONG"; s["s"] = State.TRADING
-            log.info(f"  {sym} >>> LONG BREAKOUT <<< Entry=${entry:.2f} Stop=${stop:.2f} Target=${target:.2f} Shares={sh:.4f}")
-            submit_trade(sym, "LONG", px, stop, target, sh)
+                s["entry"] = entry; s["stop"] = stop; s["target"] = target
+                s["dir"] = "LONG"; s["s"] = State.TRADING
+                log.info(f"  {sym} >>> LONG BREAKOUT <<< Entry=${entry:.2f} Stop=${stop:.2f} Target=${target:.2f} Shares={sh:.4f}")
+                submit_trade(sym, "LONG", px, stop, target, sh)
+            else:
+                log.info(f"  {sym}: LONG setup bloqueado por volumen | bar_vol={bar['v']:.0f} < avg={avg_vol:.0f}")
             return
 
-        if bar["l"] < orb_l and vol_ok:
-            entry = orb_l - 0.01
-            stop = orb_h
-            risk = stop - entry
-            target = entry - risk * RR_RATIO
-            px = current_price(sym) or entry
-            sh = shares_for(px)
+        if bar["l"] < orb_l:
+            if vol_ok:
+                entry = orb_l - 0.01
+                stop = orb_h
+                risk = stop - entry
+                target = entry - risk * RR_RATIO
+                px = current_price(sym) or entry
+                sh = shares_for(px)
 
-            s["entry"] = entry; s["stop"] = stop; s["target"] = target
-            s["dir"] = "SHORT"; s["s"] = State.TRADING
-            log.info(f"  {sym} >>> SHORT BREAKOUT <<< Entry=${entry:.2f} Stop=${stop:.2f} Target=${target:.2f} Shares={sh:.4f}")
-            submit_trade(sym, "SHORT", px, stop, target, sh)
+                s["entry"] = entry; s["stop"] = stop; s["target"] = target
+                s["dir"] = "SHORT"; s["s"] = State.TRADING
+                log.info(f"  {sym} >>> SHORT BREAKOUT <<< Entry=${entry:.2f} Stop=${stop:.2f} Target=${target:.2f} Shares={sh:.4f}")
+                submit_trade(sym, "SHORT", px, stop, target, sh)
+            else:
+                log.info(f"  {sym}: SHORT setup bloqueado por volumen | bar_vol={bar['v']:.0f} < avg={avg_vol:.0f}")
             return
+
+        # No breakout — log bar + distance to ORB levels
+        bar_et = bar["t"].astimezone(ET)
+        s["monitor_bars"].append(bar)
+        dist_h = orb_h - bar["h"]
+        dist_l = bar["l"] - orb_l
+        recent = s["monitor_bars"][-5:]
+        hist = " | ".join(
+            f"{b['t'].astimezone(ET).strftime('%H:%M')} H={b['h']:.2f} L={b['l']:.2f} C={b['c']:.2f}"
+            for b in recent
+        )
+        log.info(
+            f"  {sym}: sin breakout {bar_et.strftime('%H:%M')} | "
+            f"H={bar['h']:.2f}(Δ{dist_h:+.2f} vs ORB_H) "
+            f"L={bar['l']:.2f}(Δ{dist_l:+.2f} vs ORB_L) "
+            f"C={bar['c']:.2f} Vol={bar['v']:.0f}"
+        )
+        log.info(f"  {sym}: histórico reciente → {hist}")
 
 def reset_day():
     global state
     for sym in SYMBOLS:
         state[sym] = {"s": State.WAITING, "bars": [], "orb_h": 0, "orb_l": 0,
-                      "avg_vol": 0, "entry": 0, "stop": 0, "target": 0, "dir": ""}
+                      "avg_vol": 0, "entry": 0, "stop": 0, "target": 0, "dir": "",
+                      "monitor_bars": []}
 
 # =============================================================================
 # MAIN LOOP
