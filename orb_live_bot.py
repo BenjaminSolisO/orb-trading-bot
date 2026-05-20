@@ -11,9 +11,9 @@ Ejecucion:   python orb_live_bot.py
 """
 
 import os, sys, time, signal, csv, logging, math
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 
 # ── Timezone ET (Python 3.9+ built-in) ──
 try:
@@ -25,9 +25,9 @@ except ImportError:
 # ── Alpaca SDK ──
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, StopLossRequest, TakeProfitRequest
-from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, QueryOrderStatus
+from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, StockLatestBarRequest
+from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 # =============================================================================
@@ -46,7 +46,7 @@ MIN_RANGE_PCT   = 0.001
 VOLUME_FILTER   = True
 
 FRAME_5MIN      = TimeFrame(5, TimeFrameUnit.Minute)
-TRADE_LOG       = Path("C:/Users/solis/Downloads/classic strategies/orb_live_trades.csv")
+TRADE_LOG       = Path("orb_live_trades.csv")
 
 # =============================================================================
 # LOGGING
@@ -122,18 +122,19 @@ def market_is_open() -> bool:
     return market_is_open_now()
 
 def orb_phase() -> str:
-    t = now_et().hour * 60 + now_et().minute
+    n = now_et()
+    t = n.hour * 60 + n.minute
     if t < 565:   return "pre"
     if t <= 600:  return "orb"
     if t <= 950:  return "mon"
     return "eod"
 
 def has_open_position(sym: str) -> bool:
-    """Check if there's already an open position for this symbol."""
     try:
         pos = trade_client.get_open_position(sym)
         return pos is not None and float(pos.qty) != 0
-    except:
+    except Exception as e:
+        log.warning(f"  {sym} position check error: {e}")
         return False
 
 def fetch_bar(symbol: str) -> Optional[dict]:
@@ -262,8 +263,8 @@ def account_summary():
     try:
         a = trade_client.get_account()
         log.info(f"  Account | Equity=${float(a.equity):.2f} | Cash=${float(a.cash):.2f} | BP=${float(a.buying_power):.2f}")
-    except:
-        pass
+    except Exception as e:
+        log.warning(f"  account error: {e}")
 
 # =============================================================================
 # DAY LOGIC
@@ -353,6 +354,11 @@ def main():
     log.info(f" EOD close: 15:50 ET | Holidays: auto-detected")
     log.info(" Ctrl+C to stop")
     log.info("=" * 55)
+
+    if not ALPACA_KEY or not ALPACA_SECRET:
+        log.critical("ALPACA_KEY / ALPACA_SECRET no definidas. Saliendo.")
+        sys.exit(1)
+
     account_summary()
 
     last_day = None
@@ -388,13 +394,6 @@ def main():
 
             phase = orb_phase()
 
-            # ── Pre-open: exponential sleep approaching 9:25 ──
-            if phase == "pre":
-                remain = 565 - (n.hour * 60 + n.minute)
-                sleep_time = 60 if remain > 10 else (5 if remain > 2 else 1)
-                time.sleep(sleep_time)
-                continue
-
             # ── EOD: close positions, then sleep until tomorrow ──
             if phase == "eod" and not eod_done:
                 log.info("=== EOD 15:50 — Closing all positions ===")
@@ -416,6 +415,12 @@ def main():
 
             # ── Trading: poll bars every 5 seconds ──
             if phase in ("orb", "mon"):
+                if phase == "mon":
+                    for sym in SYMBOLS:
+                        if state[sym]["s"] == State.WAITING:
+                            log.info(f"  {sym}: missed ORB window, seeding from history...")
+                            seed_orb_if_late(sym)
+
                 for sym in SYMBOLS:
                     s = state[sym]
 
