@@ -32,10 +32,10 @@ PAPER         = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 SYMBOL_DATA   = "BTC/USD"
 SYMBOL_TRADE  = "BTCUSD"
 CAPITAL       = float(os.environ.get("CAPITAL_BTC", "500"))
-FAST_PERIOD   = int(os.environ.get("FAST_EMA", "9"))
-SLOW_PERIOD   = int(os.environ.get("SLOW_EMA", "21"))
-TIMEFRAME     = TimeFrame(15, TimeFrameUnit.Minute)
-POLL_SEC      = 60
+FAST_PERIOD   = int(os.environ.get("FAST_EMA", "3"))
+SLOW_PERIOD   = int(os.environ.get("SLOW_EMA", "8"))
+TIMEFRAME     = TimeFrame(1, TimeFrameUnit.Minute)
+POLL_SEC      = 30
 
 # =============================================================================
 # LOGGING
@@ -154,7 +154,7 @@ def main():
     log.info("=" * 50)
     log.info(" BTC MA CROSSOVER — Alpaca Paper Trading")
     log.info(f" {SYMBOL_DATA} | Capital: ${CAPITAL} | EMA({FAST_PERIOD}) x EMA({SLOW_PERIOD})")
-    log.info(f" Timeframe: 15min | Poll: {POLL_SEC}s | 24/7")
+    log.info(f" Timeframe: 1min | Poll: {POLL_SEC}s | 24/7")
     log.info("=" * 50)
 
     if not ALPACA_KEY or not ALPACA_SECRET:
