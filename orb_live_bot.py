@@ -137,7 +137,8 @@ def has_open_position(sym: str) -> bool:
         pos = trade_client.get_open_position(sym)
         return pos is not None and float(pos.qty) != 0
     except Exception as e:
-        log.warning(f"  {sym} position check error: {e}")
+        if "40410000" not in str(e):
+            log.warning(f"  {sym} position check error: {e}")
         return False
 
 def fetch_bar(symbol: str) -> Optional[dict]:
@@ -414,8 +415,11 @@ def main():
 
             # ── Skip non-trading days ──
             if n.weekday() >= 5 or not market_is_open():
-                next_check = (n + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-                sleep_sec = min((next_check - n).total_seconds(), 3600)
+                n_et = now_et()
+                orb_open = n_et.replace(hour=9, minute=25, second=0, microsecond=0)
+                if n_et >= orb_open:
+                    orb_open += timedelta(days=1)
+                sleep_sec = min((orb_open - n_et).total_seconds(), 3600)
                 if sleep_sec > 0:
                     time.sleep(sleep_sec)
                 continue
