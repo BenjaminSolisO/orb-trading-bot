@@ -441,16 +441,6 @@ def main():
                 account_summary()
                 eod_done = True
 
-                # Sleep until 6:00 AM next day in 5-min chunks (Railway kills long single sleeps)
-                tomorrow = (n + timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
-                sleep_sec = (tomorrow - n).total_seconds()
-                if sleep_sec > 0:
-                    log.info(f"  Sleeping {sleep_sec/3600:.1f}h until tomorrow...")
-                    while run_bot:
-                        remaining = (tomorrow - now_et()).total_seconds()
-                        if remaining <= 0:
-                            break
-                        time.sleep(min(remaining, 300))
                 continue
 
             # ── Trading: poll bars every 5 seconds ──
