@@ -32,8 +32,8 @@ PAPER         = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 SYMBOL_DATA   = "BTC/USD"
 SYMBOL_TRADE  = "BTCUSD"
 CAPITAL       = float(os.environ.get("CAPITAL_BTC", "500"))
-FAST_PERIOD   = int(os.environ.get("FAST_EMA", "3"))
-SLOW_PERIOD   = int(os.environ.get("SLOW_EMA", "8"))
+FAST_PERIOD   = int(os.environ.get("FAST_EMA", "2"))
+SLOW_PERIOD   = int(os.environ.get("SLOW_EMA", "5"))
 TIMEFRAME     = TimeFrame(1, TimeFrameUnit.Minute)
 POLL_SEC      = 30
 
