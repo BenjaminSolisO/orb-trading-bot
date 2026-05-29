@@ -29,6 +29,7 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from alpaca.data.enums import DataFeed
 
 # =============================================================================
 # CONFIGURACION (variables de entorno o valores directos)
@@ -148,7 +149,8 @@ def fetch_bar(symbol: str) -> Optional[dict]:
             symbol_or_symbols=symbol,
             timeframe=FRAME_5MIN,
             limit=5,
-            start=(now_et() - timedelta(minutes=15)).isoformat()
+            start=(now_et() - timedelta(minutes=15)).isoformat(),
+            feed=DataFeed.IEX,
         )
         bars = data_client.get_stock_bars(req)
         if not bars or not bars.data or symbol not in bars.data:
@@ -185,6 +187,7 @@ def seed_orb_if_late(sym: str):
             timeframe=FRAME_5MIN,
             start=orb_start.isoformat(),
             end=orb_end.isoformat(),
+            feed=DataFeed.IEX,
         )
         bars = data_client.get_stock_bars(req)
         if not bars or not bars.data or sym not in bars.data:
@@ -438,12 +441,16 @@ def main():
                 account_summary()
                 eod_done = True
 
-                # Sleep until 6:00 AM next day
+                # Sleep until 6:00 AM next day in 5-min chunks (Railway kills long single sleeps)
                 tomorrow = (n + timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
                 sleep_sec = (tomorrow - n).total_seconds()
                 if sleep_sec > 0:
                     log.info(f"  Sleeping {sleep_sec/3600:.1f}h until tomorrow...")
-                    time.sleep(sleep_sec)
+                    while run_bot:
+                        remaining = (tomorrow - now_et()).total_seconds()
+                        if remaining <= 0:
+                            break
+                        time.sleep(min(remaining, 300))
                 continue
 
             # ── Trading: poll bars every 5 seconds ──
