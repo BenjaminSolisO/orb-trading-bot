@@ -419,7 +419,8 @@ def main():
                 orb_open = n_et.replace(hour=9, minute=25, second=0, microsecond=0)
                 if n_et >= orb_open:
                     orb_open += timedelta(days=1)
-                sleep_sec = min((orb_open - n_et).total_seconds(), 3600)
+                # Cap at 5 min so bot wakes by 9:30 even when orb_open overshoots to tomorrow
+                sleep_sec = min((orb_open - n_et).total_seconds(), 300)
                 if sleep_sec > 0:
                     time.sleep(sleep_sec)
                 continue
@@ -449,8 +450,15 @@ def main():
             if phase in ("orb", "mon"):
                 if phase == "mon":
                     for sym in SYMBOLS:
-                        if state[sym]["s"] == State.WAITING:
+                        st = state[sym]["s"]
+                        if st == State.WAITING:
                             log.info(f"  {sym}: missed ORB window, seeding from history...")
+                            seed_orb_if_late(sym)
+                        elif st == State.COLLECT:
+                            # Bot restarted mid-ORB — partial bars, must re-seed clean
+                            log.info(f"  {sym}: incomplete ORB ({len(state[sym]['bars'])} bars), re-seeding...")
+                            state[sym]["s"] = State.WAITING
+                            state[sym]["bars"] = []
                             seed_orb_if_late(sym)
 
                 for sym in SYMBOLS:
