@@ -35,15 +35,19 @@ def has_position():
         return False
 
 while True:
-    signal = get_signal()
-    in_pos = has_position()
-    print(f"Signal: {signal} | Position: {'LONG' if in_pos else 'FLAT'}")
+    try:
+        signal = get_signal()
+        in_pos = has_position()
+        print(f"[{time.strftime('%H:%M:%S')}] Signal: {signal} | Position: {'LONG' if in_pos else 'FLAT'}")
 
-    if signal == "buy" and not in_pos:
-        trade.submit_order(MarketOrderRequest(symbol="BTCUSD", qty=QTY, side=OrderSide.BUY, time_in_force=TimeInForce.GTC))
-        print("BUY")
-    elif signal == "sell" and in_pos:
-        trade.close_position("BTCUSD")
-        print("SELL")
+        if signal == "buy" and not in_pos:
+            trade.submit_order(MarketOrderRequest(symbol="BTCUSD", qty=QTY, side=OrderSide.BUY, time_in_force=TimeInForce.GTC))
+            print(">>> BUY <<<")
+        elif signal == "sell" and in_pos:
+            trade.close_position("BTCUSD")
+            print(">>> SELL <<<")
+
+    except Exception as e:
+        print(f"[ERROR] {e}")
 
     time.sleep(60)
