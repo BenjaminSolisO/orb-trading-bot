@@ -30,7 +30,10 @@ def get_signal():
 
 def has_position():
     try:
-        return float(trade.get_open_position("BTCUSD").qty) > 0
+        qty = float(trade.get_open_position("BTCUSD").qty)
+        if qty > 0:  return "long"
+        if qty < 0:  return "short"
+        return False
     except:
         return False
 
@@ -38,14 +41,20 @@ while True:
     try:
         signal = get_signal()
         in_pos = has_position()
-        print(f"[{time.strftime('%H:%M:%S')}] Signal: {signal} | Position: {'LONG' if in_pos else 'FLAT'}")
+        print(f"[{time.strftime('%H:%M:%S')}] Signal: {signal} | Position: {in_pos or 'FLAT'}")
 
-        if signal == "buy" and not in_pos:
+        if signal == "buy" and in_pos == False:
             trade.submit_order(MarketOrderRequest(symbol="BTCUSD", qty=QTY, side=OrderSide.BUY, time_in_force=TimeInForce.GTC))
-            print(">>> BUY <<<")
-        elif signal == "sell" and in_pos:
+            print(">>> BUY (open long) <<<")
+        elif signal == "sell" and in_pos == False:
+            trade.submit_order(MarketOrderRequest(symbol="BTCUSD", qty=QTY, side=OrderSide.SELL, time_in_force=TimeInForce.GTC))
+            print(">>> SELL (open short) <<<")
+        elif signal == "sell" and in_pos == "long":
             trade.close_position("BTCUSD")
-            print(">>> SELL <<<")
+            print(">>> CLOSE long <<<")
+        elif signal == "buy" and in_pos == "short":
+            trade.close_position("BTCUSD")
+            print(">>> CLOSE short <<<")
 
     except Exception as e:
         print(f"[ERROR] {e}")
