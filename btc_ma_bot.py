@@ -1,4 +1,5 @@
 import os, time
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
@@ -17,7 +18,8 @@ SYMBOL = "BTC/USD"
 QTY    = 0.001
 
 def get_signal():
-    req  = CryptoBarsRequest(symbol_or_symbols=SYMBOL, timeframe=TimeFrame(1, TimeFrameUnit.Minute), limit=25)
+    start = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+    req  = CryptoBarsRequest(symbol_or_symbols=SYMBOL, timeframe=TimeFrame(1, TimeFrameUnit.Minute), start=start, limit=25)
     bars = data.get_crypto_bars(req).data[SYMBOL]
     df   = pd.DataFrame([{"close": float(b.close)} for b in bars])
     df["sma_fast"] = df["close"].rolling(2).mean()
