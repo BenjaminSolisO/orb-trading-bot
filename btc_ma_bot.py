@@ -20,8 +20,8 @@ def get_signal():
     req  = CryptoBarsRequest(symbol_or_symbols=SYMBOL, timeframe=TimeFrame(1, TimeFrameUnit.Minute), limit=25)
     bars = data.get_crypto_bars(req).data[SYMBOL]
     df   = pd.DataFrame([{"close": float(b.close)} for b in bars])
-    df["sma_fast"] = df["close"].rolling(1).mean()
-    df["sma_slow"] = df["close"].rolling(2).mean()
+    df["sma_fast"] = df["close"].rolling(2).mean()
+    df["sma_slow"] = df["close"].rolling(3).mean()
     if df["sma_fast"].iloc[-2] > df["sma_slow"].iloc[-2]:
         return "buy"
     elif df["sma_fast"].iloc[-2] < df["sma_slow"].iloc[-2]:
@@ -50,4 +50,4 @@ while True:
     except Exception as e:
         print(f"[ERROR] {e}")
 
-    time.sleep(60)
+    time.sleep(30)
