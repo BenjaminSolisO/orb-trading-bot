@@ -46,15 +46,9 @@ while True:
         if signal == "buy" and in_pos == False:
             trade.submit_order(MarketOrderRequest(symbol="BTCUSD", qty=QTY, side=OrderSide.BUY, time_in_force=TimeInForce.GTC))
             print(">>> BUY (open long) <<<")
-        elif signal == "sell" and in_pos == False:
-            trade.submit_order(MarketOrderRequest(symbol="BTCUSD", qty=QTY, side=OrderSide.SELL, time_in_force=TimeInForce.GTC))
-            print(">>> SELL (open short) <<<")
         elif signal == "sell" and in_pos == "long":
             trade.close_position("BTCUSD")
             print(">>> CLOSE long <<<")
-        elif signal == "buy" and in_pos == "short":
-            trade.close_position("BTCUSD")
-            print(">>> CLOSE short <<<")
 
     except Exception as e:
         print(f"[ERROR] {e}")
